@@ -1,0 +1,10 @@
+version: "2"
+sql:
+  - schema: "database/schema.sql"
+    queries: "database/query.sql"
+    engine: "sqlite"
+    gen:
+      go:
+        package: "database"
+        out: "database"
+        emit_prepared_queries: true
