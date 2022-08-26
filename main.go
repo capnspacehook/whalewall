@@ -17,6 +17,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("error starting: %v", err)
 	}
+	return
 
 	<-ctx.Done()
 	log.Println("shutting down")

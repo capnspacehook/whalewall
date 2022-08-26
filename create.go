@@ -2,15 +2,103 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"log"
 	"net/netip"
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/docker/docker/api/types"
+	"github.com/google/nftables"
+	"github.com/google/nftables/expr"
 )
+
+const (
+	filterTableName = "filter"
+	chainName       = "whalewall"
+	ipv4DropSetName = "testie-ipv4-drop"
+)
+
+func (r *ruleManager) createBaseRules() error {
+	tables, err := r.nfc.ListTablesOfFamily(nftables.TableFamilyIPv4)
+	if err != nil {
+		return fmt.Errorf("error listing IPv4 tables: %v", err)
+	}
+	var ipv4Table *nftables.Table
+	for _, t := range tables {
+		if t.Name == filterTableName {
+			ipv4Table = t
+			break
+		}
+	}
+
+	var set *nftables.Set
+	set, err = r.nfc.GetSetByName(ipv4Table, ipv4DropSetName)
+	if err != nil {
+		if !errors.Is(err, syscall.ENOENT) {
+			return fmt.Errorf("error getting IPv4 set: %v", err)
+		}
+		set = &nftables.Set{
+			Name:    ipv4DropSetName,
+			Table:   ipv4Table,
+			KeyType: nftables.TypeIPAddr,
+		}
+		if err := r.nfc.AddSet(set, nil); err != nil {
+			return fmt.Errorf("error creating set: %v", err)
+		}
+	}
+
+	chains, err := r.nfc.ListChainsOfTableFamily(nftables.TableFamilyIPv4)
+	if err != nil {
+		return fmt.Errorf("error listing IPv4 chains: %v", err)
+	}
+	var chain *nftables.Chain
+	for _, c := range chains {
+		if c.Name == chainName {
+			chain = c
+			break
+		}
+	}
+	if chain == nil {
+		chain = r.nfc.AddChain(&nftables.Chain{
+			Name:     chainName,
+			Table:    ipv4Table,
+			Type:     nftables.ChainTypeFilter,
+			Hooknum:  nftables.ChainHookInput,
+			Priority: nftables.ChainPriorityFilter,
+		})
+	}
+
+	r.nfc.AddRule(&nftables.Rule{
+		Table: ipv4Table,
+		Chain: chain,
+		Exprs: []expr.Any{
+			&expr.Counter{},
+			&expr.Payload{
+				DestRegister: 1,
+				Base:         expr.PayloadBaseNetworkHeader,
+				Offset:       12,
+				Len:          4,
+			},
+			&expr.Lookup{
+				SourceRegister: 1,
+				SetName:        ipv4DropSetName,
+			},
+			&expr.Verdict{
+				Kind: expr.VerdictDrop,
+			},
+		},
+	})
+
+	if err := r.nfc.Flush(); err != nil {
+		return fmt.Errorf("error flushing commands: %v", err)
+	}
+
+	return nil
+}
 
 func (r *ruleManager) createUFWRules(ch <-chan *types.ContainerJSON) {
 	for container := range ch {
@@ -102,7 +190,6 @@ func (r *ruleManager) createUFWRules(ch <-chan *types.ContainerJSON) {
 
 		// Handle outbound rules
 		if container.Config.Labels["UFW_DENY_OUT"] == "TRUE" {
-
 			if container.Config.Labels["UFW_ALLOW_TO"] != "" {
 				ufwRules := []ufwRule{}
 				ufwAllowToLabelParsed := strings.Split(container.Config.Labels["UFW_ALLOW_TO"], ";")

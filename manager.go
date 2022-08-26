@@ -13,12 +13,15 @@ import (
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
+	"github.com/google/nftables"
 )
 
 type ruleManager struct {
-	mtx        sync.RWMutex
-	wg         sync.WaitGroup
-	done       chan struct{}
+	mtx  sync.RWMutex
+	wg   sync.WaitGroup
+	done chan struct{}
+
+	nfc        *nftables.Conn
 	containers map[string]*containerRules
 }
 
@@ -49,6 +52,13 @@ func (r *ruleManager) start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("error creating docker client: %v", err)
 	}
+	c, err := nftables.New(nftables.AsLasting())
+	if err != nil {
+		return fmt.Errorf("error creating netlink connection: %v", err)
+	}
+	r.nfc = c
+
+	return r.createBaseRules()
 
 	createChannel := make(chan *types.ContainerJSON)
 	deleteChannel := make(chan string)
@@ -117,6 +127,8 @@ func addFilters(ctx context.Context, client *client.Client) (<-chan events.Messa
 func (r *ruleManager) stop() {
 	r.done <- struct{}{}
 	r.wg.Wait()
+
+	r.nfc.CloseLasting()
 }
 
 func (r *ruleManager) addContainer(id string, container *containerRules) {
