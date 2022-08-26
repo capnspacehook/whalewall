@@ -1,33 +1,29 @@
-## iptables
+## nftables rules
 
--A testie -s 127.0.0.1/32 -d 172.19.0.2/32 -p tcp -m tcp --dport 8080 -j ACCEPT
--A testie -s 172.19.0.2/32 -j DROP
-
-## nftables
-
-ip filter testie 150
-  [ meta load l4proto => reg 1 ]
-  [ cmp eq reg 1 0x00000006 ]
-  [ payload load 4b @ network header + 12 => reg 1 ]
-  [ cmp eq reg 1 0x0100007f ]
-  [ payload load 4b @ network header + 16 => reg 1 ]
-  [ cmp eq reg 1 0x020013ac ]
-  [ match name tcp rev 0 ]
-  [ counter pkts 0 bytes 0 ]
-  [ immediate reg 0 accept ]
-
-ip filter testie 151 150
-  [ payload load 4b @ network header + 12 => reg 1 ]
-  [ cmp eq reg 1 0x020013ac ]
-  [ counter pkts 0 bytes 0 ]
-  [ immediate reg 0 drop ]
-
+```sh
 table ip filter {
-        chain testie {
-                meta l4proto tcp ip saddr 127.0.0.1 ip daddr 172.19.0.2 tcp dport 8080 counter packets 0 bytes 0 accept
-                ip saddr 172.19.0.2 counter packets 0 bytes 0 drop
+        map whalewall-ipv4-input-allow {
+                type ipv4_addr . inet_proto . inet_service . ct_state : verdict
         }
 }
+
+table ip filter {
+        set whalewall-ipv4-drop {
+                type ipv4_addr
+        }
+}
+
+table ip filter {
+        chain whalewall {
+                ip daddr . ip protocol . tcp sport . ct state vmap @whalewall-ipv4-input-allow
+                ip daddr . ip protocol . udp sport . ct state vmap @whalewall-ipv4-input-allow
+                ip saddr . ip protocol . tcp dport . ct state vmap @whalewall-ipv4-output-allow
+                ip saddr . ip protocol . udp dport . ct state vmap @whalewall-ipv4-output-allow
+                ip saddr @whalewall-ipv4-drop drop
+                ip daddr @whalewall-ipv4-drop drop
+        }
+}
+```
 
 ## findings
 
@@ -38,7 +34,11 @@ table ip filter {
 ## DNS from container to host
 
 - https://stackoverflow.com/questions/31324981/how-to-access-host-port-from-docker-container
-- set container DNS to go IP of `docker0` interface
+- https://superuser.com/questions/1302921/tell-docker-to-use-the-dns-server-in-the-host-system
+- set default DNS server for containers `/etc/docker/daemon.json`
+  - `"dns": ["172.17.0.1"]`
+- have unbound bind to `172.17.0.1` (IP of `docker0` interface)
+- have unbound allow queries from `172.0.0.0/8`
 
 ## rules to use
 
@@ -89,10 +89,19 @@ whalewall.output:
   output_est_queue: optional +
 ```
 
-## docker
+// TODO: replace vmaps with set and "accept"
 
-- https://superuser.com/questions/1302921/tell-docker-to-use-the-dns-server-in-the-host-system
-- set default DNS server for containers `/etc/docker/daemon.json`
-  - `"dns": ["172.17.0.1"]`
-- have unbound bind to `172.17.0.1` (IP of `docker0` interface)
-- have unbound allow queries from `172.0.0.0/8`
+sudo nft add set ip filter whalewall-ipv4-drop "{ type ipv4_addr ; }"
+sudo nft add map filter whalewall-ipv4-input-allow "{ type ipv4_addr . inet_proto . inet_service . ct_state : verdict ; }"
+sudo nft add map filter whalewall-ipv4-output-allow "{ type ipv4_addr . inet_proto . inet_service . ct_state : verdict ; }"
+sudo nft add element ip filter whalewall-ipv4-drop "{ 172.19.0.2 }"
+sudo nft add element ip filter whalewall-ipv4-output-allow "{ 172.19.0.2 . udp . 53 . new: accept }"
+sudo nft add element ip filter whalewall-ipv4-output-allow "{ 172.19.0.2 . udp . 53 . established: accept }"
+sudo nft add element ip filter whalewall-ipv4-output-allow "{ 172.19.0.2 . udp . 53 . related: accept }"
+sudo nft add element ip filter whalewall-ipv4-input-allow "{ 172.19.0.2 . udp . 53 . established: accept }" 
+sudo nft add element ip filter whalewall-ipv4-input-allow "{ 172.19.0.2 . udp . 53 . related: accept }"
+sudo nft add element ip filter whalewall-ipv4-output-allow "{ 172.19.0.2 . tcp . 443 . new: accept }"
+sudo nft add element ip filter whalewall-ipv4-output-allow "{ 172.19.0.2 . tcp . 443 . established: accept }"
+sudo nft add element ip filter whalewall-ipv4-output-allow "{ 172.19.0.2 . tcp . 443 . related: accept }"
+sudo nft add element ip filter whalewall-ipv4-input-allow "{ 172.19.0.2 . tcp . 443 . established: accept }" 
+sudo nft add element ip filter whalewall-ipv4-input-allow "{ 172.19.0.2 . tcp . 443 . related: accept }"
