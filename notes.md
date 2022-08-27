@@ -13,6 +13,52 @@ table ip filter {
         }
 }
 
+ip filter whalewall 59
+  [ meta load l4proto => reg 1 ]
+  [ cmp eq reg 1 0x00000006 ]
+  [ payload load 4b @ network header + 16 => reg 1 ]
+  [ payload load 1b @ network header + 9 => reg 9 ]
+  [ payload load 2b @ transport header + 0 => reg 10 ]
+  [ ct load state => reg 11 ]
+  [ lookup reg 1 set whalewall-ipv4-input-allow dreg 0 0x0 ]
+
+ip filter whalewall 60 59
+  [ meta load l4proto => reg 1 ]
+  [ cmp eq reg 1 0x00000011 ]
+  [ payload load 4b @ network header + 16 => reg 1 ]
+  [ payload load 1b @ network header + 9 => reg 9 ]
+  [ payload load 2b @ transport header + 0 => reg 10 ]
+  [ ct load state => reg 11 ]
+  [ lookup reg 1 set whalewall-ipv4-input-allow dreg 0 0x0 ]
+
+ip filter whalewall 61 60
+  [ meta load l4proto => reg 1 ]
+  [ cmp eq reg 1 0x00000006 ]
+  [ payload load 4b @ network header + 12 => reg 1 ]
+  [ payload load 1b @ network header + 9 => reg 9 ]
+  [ payload load 2b @ transport header + 2 => reg 10 ]
+  [ ct load state => reg 11 ]
+  [ lookup reg 1 set whalewall-ipv4-output-allow dreg 0 0x0 ]
+
+ip filter whalewall 62 61
+  [ meta load l4proto => reg 1 ]
+  [ cmp eq reg 1 0x00000011 ]
+  [ payload load 4b @ network header + 12 => reg 1 ]
+  [ payload load 1b @ network header + 9 => reg 9 ]
+  [ payload load 2b @ transport header + 2 => reg 10 ]
+  [ ct load state => reg 11 ]
+  [ lookup reg 1 set whalewall-ipv4-output-allow dreg 0 0x0 ]
+
+ip filter whalewall 63 62
+  [ payload load 4b @ network header + 12 => reg 1 ]
+  [ lookup reg 1 set whalewall-ipv4-drop 0x0 ]
+  [ immediate reg 0 drop ]
+
+ip filter whalewall 64 63
+  [ payload load 4b @ network header + 16 => reg 1 ]
+  [ lookup reg 1 set whalewall-ipv4-drop 0x0 ]
+  [ immediate reg 0 drop ]
+
 table ip filter {
         chain whalewall {
                 ip daddr . ip protocol . tcp sport . ct state vmap @whalewall-ipv4-input-allow
@@ -29,7 +75,6 @@ table ip filter {
 
 - set elements can be added multiple times with no error, will not be duplicated
 - sets can be created multiple times with no error, will not be overwritten
-
 
 ## DNS from container to host
 
@@ -89,18 +134,16 @@ whalewall.output:
   output_est_queue: optional +
 ```
 
-// TODO: replace vmaps with set and "accept"
-
 sudo nft add set ip filter whalewall-ipv4-drop "{ type ipv4_addr ; }"
 sudo nft add map filter whalewall-ipv4-input-allow "{ type ipv4_addr . inet_proto . inet_service . ct_state : verdict ; }"
 sudo nft add map filter whalewall-ipv4-output-allow "{ type ipv4_addr . inet_proto . inet_service . ct_state : verdict ; }"
 sudo nft add element ip filter whalewall-ipv4-drop "{ 172.19.0.2 }"
-sudo nft add element ip filter whalewall-ipv4-output-allow "{ 172.19.0.2 . udp . 53 . new: accept }"
-sudo nft add element ip filter whalewall-ipv4-output-allow "{ 172.19.0.2 . udp . 53 . established: accept }"
-sudo nft add element ip filter whalewall-ipv4-output-allow "{ 172.19.0.2 . udp . 53 . related: accept }"
-sudo nft add element ip filter whalewall-ipv4-input-allow "{ 172.19.0.2 . udp . 53 . established: accept }" 
-sudo nft add element ip filter whalewall-ipv4-input-allow "{ 172.19.0.2 . udp . 53 . related: accept }"
-sudo nft add element ip filter whalewall-ipv4-output-allow "{ 172.19.0.2 . tcp . 443 . new: accept }"
+sudo nft add element ip filter whalewall-ipv4-output-allow "{ 172.19.0.2 . udp . 53 . new : accept }"
+sudo nft add element ip filter whalewall-ipv4-output-allow "{ 172.19.0.2 . udp . 53 . established : accept }"
+sudo nft add element ip filter whalewall-ipv4-output-allow "{ 172.19.0.2 . udp . 53 . related : accept }"
+sudo nft add element ip filter whalewall-ipv4-input-allow "{ 172.19.0.2 . udp . 53 . established : accept }" 
+sudo nft add element ip filter whalewall-ipv4-input-allow "{ 172.19.0.2 . udp . 53 . related : accept }"
+sudo nft add element ip filter whalewall-ipv4-output-allow "{ 172.19.0.2 . tcp . 443 . new : accept }"
 sudo nft add element ip filter whalewall-ipv4-output-allow "{ 172.19.0.2 . tcp . 443 . established: accept }"
 sudo nft add element ip filter whalewall-ipv4-output-allow "{ 172.19.0.2 . tcp . 443 . related: accept }"
 sudo nft add element ip filter whalewall-ipv4-input-allow "{ 172.19.0.2 . tcp . 443 . established: accept }" 
