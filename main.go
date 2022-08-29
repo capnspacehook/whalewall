@@ -8,6 +8,8 @@ import (
 )
 
 func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -17,7 +19,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("error starting: %v", err)
 	}
-	return
 
 	<-ctx.Done()
 	log.Println("shutting down")

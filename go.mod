@@ -6,6 +6,8 @@ require (
 	github.com/docker/docker v20.10.17+incompatible
 	github.com/google/nftables v0.0.0-20220808154552-2eca00135732
 	github.com/kr/pretty v0.3.0
+	golang.org/x/sys v0.0.0-20220825204002-c680a09ffe64
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -29,7 +31,6 @@ require (
 	github.com/stretchr/testify v1.7.0 // indirect
 	golang.org/x/net v0.0.0-20220826154423-83b083e8dc8b // indirect
 	golang.org/x/sync v0.0.0-20220819030929-7fc1605a5dde // indirect
-	golang.org/x/sys v0.0.0-20220825204002-c680a09ffe64 // indirect
 	golang.org/x/time v0.0.0-20200630173020-3af7569d3a1e // indirect
 	gotest.tools/v3 v3.0.3 // indirect
 )

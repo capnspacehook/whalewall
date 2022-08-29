@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"strings"
+	"net/netip"
 	"sync"
 
 	"github.com/docker/docker/api/types"
@@ -14,6 +14,12 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
 	"github.com/google/nftables"
+	"gopkg.in/yaml.v3"
+)
+
+const (
+	enabledLabel = "whalewall.enabled"
+	rulesLabel   = "whalewall.rules"
 )
 
 type ruleManager struct {
@@ -21,29 +27,24 @@ type ruleManager struct {
 	wg   sync.WaitGroup
 	done chan struct{}
 
-	nfc        *nftables.Conn
-	containers map[string]*containerRules
+	nfc            *nftables.Conn
+	inputAllowSet  *nftables.Set
+	outputAllowSet *nftables.Set
+	dropSet        *nftables.Set
+	containers     map[string]*containerInfo
 }
 
-type containerRules struct {
-	Name             string
-	IPAddress        string
-	Labels           map[string]string
-	UfwInboundRules  []ufwRule
-	UfwOutboundRules []ufwRule
-}
-
-type ufwRule struct {
-	CIDR    string
-	Port    string
-	Proto   string
-	Comment string
+type containerInfo struct {
+	Name   string
+	IP     netip.Addr
+	Labels map[string]string
+	Rules  containerRules
 }
 
 func newRuleManager() *ruleManager {
 	return &ruleManager{
 		done:       make(chan struct{}),
-		containers: make(map[string]*containerRules),
+		containers: make(map[string]*containerInfo),
 	}
 }
 
@@ -58,23 +59,26 @@ func (r *ruleManager) start(ctx context.Context) error {
 	}
 	r.nfc = c
 
-	return r.createBaseRules()
+	if err := r.createBaseRules(); err != nil {
+		return fmt.Errorf("error creating base rules: %v", err)
+	}
 
 	createChannel := make(chan *types.ContainerJSON)
 	deleteChannel := make(chan string)
 
-	r.wg.Add(2)
+	// TODO: make "2"
+	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
 		r.createUFWRules(createChannel)
 	}()
-	go func() {
-		defer r.wg.Done()
-		r.deleteUFWRules(deleteChannel)
-	}()
+	// go func() {
+	// 	defer r.wg.Done()
+	// 	r.deleteUFWRules(deleteChannel)
+	// }()
 
 	syncContainers(ctx, createChannel, dockerCli)
-	cleanupRules(ctx, dockerCli)
+	//cleanupRules(ctx, dockerCli)
 
 	r.wg.Add(1)
 	go func() {
@@ -84,8 +88,22 @@ func (r *ruleManager) start(ctx context.Context) error {
 		for {
 			select {
 			case msg := <-messages:
-				if ufwManaged := msg.Actor.Attributes["UFW_MANAGED"]; strings.ToUpper(ufwManaged) == "TRUE" {
+				if e, ok := msg.Actor.Attributes[enabledLabel]; ok {
+					var enabled bool
+					if err := yaml.Unmarshal([]byte(e), &enabled); err != nil {
+						log.Printf("error parsing %q label: %v", enabledLabel, err)
+						continue
+					}
+					if !enabled {
+						continue
+					}
+
 					if msg.Action == "start" {
+						// if no rules are defined there is nothing to be done
+						if _, ok := msg.Actor.Attributes[rulesLabel]; !ok {
+							continue
+						}
+
 						container, err := dockerCli.ContainerInspect(ctx, msg.ID)
 						if err != nil {
 							log.Printf("error inspecting container: %v", err)
@@ -131,14 +149,14 @@ func (r *ruleManager) stop() {
 	r.nfc.CloseLasting()
 }
 
-func (r *ruleManager) addContainer(id string, container *containerRules) {
+func (r *ruleManager) addContainer(id string, container *containerInfo) {
 	r.mtx.Lock()
 	defer r.mtx.Unlock()
 
 	r.containers[id] = container
 }
 
-func (r *ruleManager) getContainer(id string) (*containerRules, bool) {
+func (r *ruleManager) getContainer(id string) (*containerInfo, bool) {
 	r.mtx.RLock()
 	defer r.mtx.RUnlock()
 
