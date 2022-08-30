@@ -7,11 +7,14 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
+	"gopkg.in/yaml.v3"
 )
 
-func syncContainers(ctx context.Context, createChannel chan *types.ContainerJSON, client *client.Client) {
-	var filter = filters.NewArgs()
-	filter.Add("label", enabledLabel)
+func syncContainers(ctx context.Context, createChannel chan types.ContainerJSON, client *client.Client) {
+	filter := filters.NewArgs(filters.KeyValuePair{
+		Key:   "label",
+		Value: enabledLabel,
+	})
 	containers, err := client.ContainerList(ctx, types.ContainerListOptions{Filters: filter})
 	if err != nil {
 		log.Println(err)
@@ -25,11 +28,15 @@ func syncContainers(ctx context.Context, createChannel chan *types.ContainerJSON
 			continue
 		}
 
-		// if no rules are defined there is nothing to be done
-		if _, ok := container.Config.Labels[rulesLabel]; !ok {
-			continue
+		if e, ok := container.Config.Labels[enabledLabel]; ok {
+			var enabled bool
+			if err := yaml.Unmarshal([]byte(e), &enabled); err != nil {
+				log.Printf("error parsing %q label: %v", enabledLabel, err)
+				continue
+			}
+			if enabled {
+				createChannel <- container
+			}
 		}
-
-		createChannel <- &container
 	}
 }

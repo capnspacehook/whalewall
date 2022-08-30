@@ -43,6 +43,9 @@ func validateRule(r ruleConfig) error {
 	if r.IP.IsValid() && r.Container != "" {
 		return errors.New(`"IP" and "Container" are mutually exclusive`)
 	}
+	if r.Network == "" && r.Container != "" {
+		return errors.New(`"Network must be set when "Container" is set`)
+	}
 	if r.Port != 0 && r.Proto == "" {
 		return errors.New(`"Proto" must be set when "Port" is set`)
 	}

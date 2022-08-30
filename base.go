@@ -185,6 +185,15 @@ func rulesEqual(r1, r2 *nftables.Rule) bool {
 	}
 
 	for i := range r1.Exprs {
+		// skip comparing counters, they will probably have different
+		// number of packets/bytes counted
+		if _, ok := r1.Exprs[i].(*expr.Counter); ok {
+			continue
+		}
+		if _, ok := r2.Exprs[i].(*expr.Counter); ok {
+			continue
+		}
+
 		exprb1, err := expr.Marshal(byte(r1.Table.Family), r1.Exprs[i])
 		if err != nil {
 			log.Printf("error marshalling rule: %v", err)

@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/binary"
 	"log"
 	"net/netip"
 	"strings"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/client"
 	"github.com/google/nftables"
 	"github.com/google/nftables/expr"
 	"golang.org/x/exp/slices"
@@ -21,62 +24,36 @@ const (
 	dstPortOffset = 2
 )
 
-func (r *ruleManager) createRules(ch <-chan *types.ContainerJSON) {
+func (r *ruleManager) createRules(ctx context.Context, ch <-chan types.ContainerJSON, dockerCli *client.Client) {
 	for container := range ch {
 		// container name appears with prefix "/"
 		containerName := strings.Replace(container.Name, "/", "", 1)
 		log.Printf("adding rules for %q", containerName)
 
-		cfg := container.Config.Labels[rulesLabel]
 		var rulesCfg config
-		if err := yaml.Unmarshal([]byte(cfg), &rulesCfg); err != nil {
-			log.Printf("error parsing rules: %v", err)
-			continue
-		}
-		if err := validateConfig(rulesCfg); err != nil {
-			log.Printf("error validating rules: %v", err)
-			continue
+		cfg, configExists := container.Config.Labels[rulesLabel]
+		if configExists {
+			if err := yaml.Unmarshal([]byte(cfg), &rulesCfg); err != nil {
+				log.Printf("error parsing rules: %v", err)
+				continue
+			}
+			if err := validateConfig(rulesCfg); err != nil {
+				log.Printf("error validating rules: %v", err)
+				continue
+			}
 		}
 
 		addrs := make(map[string][]byte, len(container.NetworkSettings.Networks))
 		for netName, netSettings := range container.NetworkSettings.Networks {
 			addr, err := netip.ParseAddr(netSettings.IPAddress)
 			if err != nil {
-				log.Printf("error parsing container IP: %v", err)
+				log.Printf("error parsing IP of container: %q: %v", containerName, err)
 				continue
 			}
 			addrs[netName] = ref(addr.As4())[:]
 		}
 
-		validateNetworks := func(rulesCfg []ruleConfig, direction string) bool {
-			for i, ruleCfg := range rulesCfg {
-				if ruleCfg.Network != "" {
-					if _, ok := addrs[ruleCfg.Network]; !ok {
-						// docker compose will prepend "docker_" to network names
-						dockerNetName := "docker_" + ruleCfg.Network
-						addr, ok := addrs[dockerNetName]
-						if !ok {
-							log.Printf("error validating rules: %s rule #%d: network %q not found",
-								direction,
-								i,
-								ruleCfg.Network,
-							)
-							return false
-						}
-
-						// move address to network name the user specified
-						delete(addrs, dockerNetName)
-						addrs[ruleCfg.Network] = addr
-					}
-				}
-			}
-
-			return true
-		}
-		if !validateNetworks(rulesCfg.Input, "input") {
-			continue
-		}
-		if !validateNetworks(rulesCfg.Output, "output") {
+		if configExists && !r.validateRuleNetworks(ctx, rulesCfg, dockerCli, addrs) {
 			continue
 		}
 
@@ -106,14 +83,16 @@ func (r *ruleManager) createRules(ch <-chan *types.ContainerJSON) {
 		}
 
 		// ensure we aren't creating existing rules
-		curRules, err := r.nfc.GetRules(r.chain.Table, r.chain)
-		if err != nil {
-			log.Printf("error getting rules of %q: %v", r.chain.Name, err)
-			continue
-		}
-		for i := range nftRules {
-			if findRule(nftRules[i], curRules) {
-				nftRules = slices.Delete(nftRules, i, i)
+		if configExists {
+			curRules, err := r.nfc.GetRules(r.chain.Table, r.chain)
+			if err != nil {
+				log.Printf("error getting rules of %q: %v", r.chain.Name, err)
+				continue
+			}
+			for i := range nftRules {
+				if findRule(nftRules[i], curRules) {
+					nftRules = slices.Delete(nftRules, i, i)
+				}
 			}
 		}
 
@@ -125,8 +104,7 @@ func (r *ruleManager) createRules(ch <-chan *types.ContainerJSON) {
 			})
 		}
 
-		err = r.nfc.SetAddElements(r.dropSet, elements)
-		if err != nil {
+		if err := r.nfc.SetAddElements(r.dropSet, elements); err != nil {
 			log.Printf("error adding set elements: %v", err)
 		}
 
@@ -148,6 +126,121 @@ func (r *ruleManager) createRules(ch <-chan *types.ContainerJSON) {
 		}
 		r.addContainer(container.ID, c)
 	}
+}
+
+func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, dockerCli *client.Client, addrs map[string][]byte) bool {
+	var listedConts []types.Container
+	var err error
+
+	inIdx := slices.IndexFunc(cfg.Input, func(r ruleConfig) bool {
+		return r.Container != ""
+	})
+	outIdx := slices.IndexFunc(cfg.Output, func(r ruleConfig) bool {
+		return r.Container != ""
+	})
+	if inIdx != -1 || outIdx != -1 {
+		filter := filters.NewArgs(filters.KeyValuePair{
+			Key:   "status",
+			Value: "running",
+		})
+		listedConts, err = dockerCli.ContainerList(ctx, types.ContainerListOptions{Filters: filter})
+		if err != nil {
+			log.Printf("error listing running containers: %v", err)
+			return false
+		}
+	}
+
+	containers := make(map[string]types.ContainerJSON)
+	validateNetworks := func(rulesCfg []ruleConfig, direction string) bool {
+		for i, ruleCfg := range rulesCfg {
+			// ensure the specified network exist
+			if ruleCfg.Network != "" {
+				if _, ok := addrs[ruleCfg.Network]; !ok {
+					// docker compose will prepend "docker_" to network names
+					dockerNetName := "docker_" + ruleCfg.Network
+					addr, ok := addrs[dockerNetName]
+					if !ok {
+						log.Printf("error validating rules: %s rule #%d: network %q not found",
+							direction,
+							i,
+							ruleCfg.Network,
+						)
+						return false
+					}
+
+					// move address to network name the user specified
+					delete(addrs, dockerNetName)
+					addrs[ruleCfg.Network] = addr
+				}
+			}
+			// ensure the specified container exists and is a member of
+			// the specified network
+			if ruleCfg.Container != "" {
+				var found bool
+				slashName := "/" + ruleCfg.Container
+				for _, listedCont := range listedConts {
+					if !slices.Contains(listedCont.Names, slashName) {
+						continue
+					}
+					found = true
+
+					container, ok := containers[ruleCfg.Container]
+					if !ok {
+						container, err = dockerCli.ContainerInspect(ctx, listedCont.ID)
+						if err != nil {
+							log.Printf("error inspecting container %s: %v", ruleCfg.Container, err)
+							return false
+						}
+						containers[ruleCfg.Container] = container
+					}
+
+					netName := ruleCfg.Network
+					network, ok := container.NetworkSettings.Networks[netName]
+					if !ok {
+						// docker compose will prepend "docker_" to network names
+						netName = "docker_" + netName
+						network, ok = container.NetworkSettings.Networks[netName]
+						if !ok {
+							log.Printf("error validating rules: %s rule #%d: network %q not found for container %q",
+								direction,
+								i,
+								ruleCfg.Network,
+								ruleCfg.Container,
+							)
+							return false
+						}
+					}
+
+					addr, err := netip.ParseAddr(network.IPAddress)
+					if err != nil {
+						log.Printf("error parsing IP of container: %q: %v", ruleCfg.Container, err)
+						return false
+					}
+					rulesCfg[i].IP = addr
+				}
+
+				if !found {
+					log.Printf("error validating rules: %s rule #%d: container %q not found",
+						direction,
+						i,
+						ruleCfg.Container,
+					)
+					return false
+				}
+			}
+		}
+
+		return true
+	}
+
+	if !validateNetworks(cfg.Input, "input") {
+		return false
+	}
+	if !validateNetworks(cfg.Output, "output") {
+		return false
+	}
+
+	return true
 }
 
 func (r *ruleManager) createNFTRules(inbound bool, addr []byte, cfg ruleConfig, contID string) []*nftables.Rule {

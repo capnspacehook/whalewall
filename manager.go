@@ -61,13 +61,13 @@ func (r *ruleManager) start(ctx context.Context) error {
 		return fmt.Errorf("error creating base rules: %v", err)
 	}
 
-	createChannel := make(chan *types.ContainerJSON)
+	createChannel := make(chan types.ContainerJSON)
 	deleteChannel := make(chan string)
 
 	r.wg.Add(2)
 	go func() {
 		defer r.wg.Done()
-		r.createRules(createChannel)
+		r.createRules(ctx, createChannel, dockerCli)
 	}()
 	go func() {
 		defer r.wg.Done()
@@ -100,17 +100,12 @@ func (r *ruleManager) start(ctx context.Context) error {
 					}
 
 					if msg.Action == "start" {
-						// if no rules are defined there is nothing to be done
-						if _, ok := msg.Actor.Attributes[rulesLabel]; !ok {
-							continue
-						}
-
 						container, err := dockerCli.ContainerInspect(ctx, msg.ID)
 						if err != nil {
 							log.Printf("error inspecting container: %v", err)
 							continue
 						}
-						createChannel <- &container
+						createChannel <- container
 					}
 					if msg.Action == "kill" {
 						deleteChannel <- msg.ID
