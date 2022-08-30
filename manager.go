@@ -27,11 +27,10 @@ type ruleManager struct {
 	wg   sync.WaitGroup
 	done chan struct{}
 
-	nfc            *nftables.Conn
-	inputAllowSet  *nftables.Set
-	outputAllowSet *nftables.Set
-	dropSet        *nftables.Set
-	containers     map[string]*containerInfo
+	nfc        *nftables.Conn
+	chain      *nftables.Chain
+	dropSet    *nftables.Set
+	containers map[string]*containerInfo
 }
 
 type containerInfo struct {

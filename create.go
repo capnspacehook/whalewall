@@ -43,52 +43,86 @@ func (r *ruleManager) createUFWRules(ch <-chan *types.ContainerJSON) {
 			continue
 		}
 
-		c := &containerInfo{
-			Name:   containerName,
-			IP:     ip,
-			Labels: container.Config.Labels,
-			Rules:  rules,
-		}
-		r.addContainer(containerID, c)
-
 		// TODO: handle IPv6
+		var nftRules []*nftables.Rule
 		addr := ip.As4()
 
 		// handle inbound rules
 
 		// handle outbound rules
 		for _, rule := range rules.Output {
-			elements := make([]nftables.SetElement, 3)
-
-			var key []byte
-			key = append(key, addr[:]...)
-			proto := strings.ToLower(rule.Proto)
-			if proto == "tcp" {
-				key = append(key, unix.IPPROTO_TCP)
-			} else {
-				key = append(key, unix.IPPROTO_UDP)
+			// ip saddr SADDR PROTO dport PORT ct state new counter accept
+			nftRule := &nftables.Rule{
+				Table: r.chain.Table,
+				Chain: r.chain,
+				Exprs: []expr.Any{
+					// [ payload load 4b @ network header + 12 => reg 1 ]
+					&expr.Payload{
+						OperationType: expr.PayloadLoad,
+						Len:           4,
+						Base:          expr.PayloadBaseNetworkHeader,
+						Offset:        12,
+						DestRegister:  1,
+					},
+					// [ cmp eq reg 1 ... ]
+					&expr.Cmp{
+						Op:       expr.CmpOpEq,
+						Register: 1,
+						Data:     addr[:],
+					},
+					// [ meta load l4proto => reg 1 ]
+					&expr.Meta{
+						Key:      expr.MetaKeyL4PROTO,
+						Register: 1,
+					},
+					// [ cmp eq reg 1 ... ]
+					&expr.Cmp{
+						Op:       expr.CmpOpEq,
+						Register: 1,
+						Data:     []byte{unix.IPPROTO_TCP}, // TODO: make dynamic
+					},
+					// [ payload load 2b @ transport header + 2 => reg 1 ]
+					&expr.Payload{
+						OperationType: expr.PayloadLoad,
+						Len:           2,
+						Base:          expr.PayloadBaseTransportHeader,
+						Offset:        2,
+						DestRegister:  1,
+					},
+					// [ cmp eq reg 1 ... ]
+					&expr.Cmp{
+						Op:       expr.CmpOpEq,
+						Register: 1,
+						Data:     binary.BigEndian.AppendUint16(nil, rule.Port),
+					},
+					// [ ct load state => reg 1 ]
+					&expr.Ct{
+						Key:      expr.CtKeySTATE,
+						Register: 1,
+					},
+					// [ bitwise reg 1 = ( reg 1 & ... ) ^ 0x00000000 ]
+					&expr.Bitwise{
+						SourceRegister: 1,
+						DestRegister:   1,
+						Len:            4,
+						Mask:           binary.BigEndian.AppendUint32(nil, expr.CtStateBitNEW),
+						Xor:            []byte{0, 0, 0, 0},
+					},
+					// [ cmp neq reg 1 0x00000000 ]
+					&expr.Cmp{
+						Op:       expr.CmpOpNeq,
+						Register: 1,
+						Data:     []byte{0, 0, 0, 0},
+					},
+					&expr.Counter{},
+					&expr.Verdict{
+						Kind: expr.VerdictAccept,
+					},
+				},
 			}
-			key = binary.BigEndian.AppendUint16(key, rule.Port)
 
-			elements[0].Key = binary.BigEndian.AppendUint32(key, expr.CtStateBitNEW)
-			elements[1].Key = binary.BigEndian.AppendUint32(key, expr.CtStateBitESTABLISHED)
-			elements[2].Key = binary.BigEndian.AppendUint32(key, expr.CtStateBitRELATED)
-
-			// TODO: allow specifying "jump" or "queue"
-			for i := range elements {
-				elements[i].VerdictData = &expr.Verdict{
-					Kind: expr.VerdictAccept,
-				}
-			}
-
-			if err := r.nfc.SetAddElements(r.outputAllowSet, elements); err != nil {
-				log.Printf("error adding set elements: %v", err)
-				continue
-			}
-			if err := r.nfc.SetAddElements(r.inputAllowSet, elements[1:]); err != nil {
-				log.Printf("error adding set elements: %v", err)
-				continue
-			}
+			r.nfc.AddRule(nftRule)
+			nftRules = append(nftRules, nftRule)
 		}
 
 		// handle deny all out
@@ -102,6 +136,15 @@ func (r *ruleManager) createUFWRules(ch <-chan *types.ContainerJSON) {
 
 		if err := r.nfc.Flush(); err != nil {
 			log.Printf("error flushing set elements: %v", err)
+			continue
 		}
+
+		c := &containerInfo{
+			Name:   containerName,
+			IP:     ip,
+			Labels: container.Config.Labels,
+			Rules:  rules,
+		}
+		r.addContainer(containerID, c)
 	}
 }
