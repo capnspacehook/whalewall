@@ -53,21 +53,31 @@ func (r *ruleManager) createBaseRules() error {
 	if dockerChain == nil {
 		return errors.New("couldn't find required Docker chain, is Docker running?")
 	}
-	// TODO: check if all rules are added if chain exists
+
+	var ourRules []*nftables.Rule
+	var addDropRules bool
 	if r.chain == nil {
 		r.chain = r.nfc.AddChain(&nftables.Chain{
-			Name:     chainName,
-			Table:    ipv4Table,
-			Type:     nftables.ChainTypeFilter,
-			Hooknum:  nftables.ChainHookInput,
-			Priority: nftables.ChainPriorityFilter,
+			Name:   chainName,
+			Table:  ipv4Table,
+			Type:   nftables.ChainTypeFilter,
+			Legacy: true,
 		})
+		addDropRules = true
+	} else {
+		ourRules, err = r.nfc.GetRules(ipv4Table, r.chain)
+		if err != nil {
+			return fmt.Errorf("error listing rules of %q chain: %v", chainName, err)
+		}
+		if len(ourRules) == 0 {
+			addDropRules = true
+		}
 	}
 
 	// add rule to jump to whalewall chain from DOCKER-USER
 	dockerRules, err := r.nfc.GetRules(ipv4Table, dockerChain)
 	if err != nil {
-		return fmt.Errorf("error listing rules: %v", err)
+		return fmt.Errorf("error listing rules of %q chain: %v", dockerUserChainName, err)
 	}
 
 	jumpRule := &nftables.Rule{
@@ -86,7 +96,7 @@ func (r *ruleManager) createBaseRules() error {
 	}
 
 	// ip saddr @whalewall-ipv4-drop drop
-	r.nfc.AddRule(&nftables.Rule{
+	dropSrcRule := &nftables.Rule{
 		Table: ipv4Table,
 		Chain: r.chain,
 		Exprs: []expr.Any{
@@ -109,10 +119,13 @@ func (r *ruleManager) createBaseRules() error {
 				Kind: expr.VerdictDrop,
 			},
 		},
-	})
+	}
+	if addDropRules || !findRule(dropSrcRule, ourRules) {
+		r.nfc.AddRule(dropSrcRule)
+	}
 
 	// ip daddr @whalewall-ipv4-drop drop
-	r.nfc.AddRule(&nftables.Rule{
+	dropDstRule := &nftables.Rule{
 		Table: ipv4Table,
 		Chain: r.chain,
 		Exprs: []expr.Any{
@@ -135,10 +148,13 @@ func (r *ruleManager) createBaseRules() error {
 				Kind: expr.VerdictDrop,
 			},
 		},
-	})
+	}
+	if addDropRules || !findRule(dropDstRule, ourRules) {
+		r.nfc.AddRule(dropDstRule)
+	}
 
 	if err := r.nfc.Flush(); err != nil {
-		return fmt.Errorf("error creating rules: %v", err)
+		return fmt.Errorf("error flushing commands: %v", err)
 	}
 
 	return nil

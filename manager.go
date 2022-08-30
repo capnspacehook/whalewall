@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/netip"
 	"sync"
 
 	"github.com/docker/docker/api/types"
@@ -34,10 +33,10 @@ type ruleManager struct {
 }
 
 type containerInfo struct {
-	Name   string
-	IP     netip.Addr
-	Labels map[string]string
-	Rules  containerRules
+	Name  string
+	Addrs map[string][]byte
+	Cfg   containerRules
+	Rules []*nftables.Rule
 }
 
 func newRuleManager() *ruleManager {
@@ -69,7 +68,7 @@ func (r *ruleManager) start(ctx context.Context) error {
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
-		r.createUFWRules(createChannel)
+		r.createRules(createChannel)
 	}()
 	// go func() {
 	// 	defer r.wg.Done()
@@ -115,6 +114,9 @@ func (r *ruleManager) start(ctx context.Context) error {
 					}
 				}
 			case err := <-streamErrs:
+				if errors.Is(err, context.Canceled) {
+					continue
+				}
 				if !errors.Is(err, io.EOF) {
 					log.Printf("error reading docker event stream: %v", err)
 				}

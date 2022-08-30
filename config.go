@@ -10,6 +10,7 @@ type containerRules struct {
 }
 
 type containerRule struct {
+	Network   string
 	IP        netip.Addr
 	Container string
 	Proto     string
