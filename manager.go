@@ -22,7 +22,7 @@ const (
 )
 
 type ruleManager struct {
-	mtx  sync.RWMutex
+	mtx  sync.Mutex
 	wg   sync.WaitGroup
 	done chan struct{}
 
@@ -33,10 +33,10 @@ type ruleManager struct {
 }
 
 type containerInfo struct {
-	Name  string
-	Addrs map[string][]byte
-	Cfg   containerRules
-	Rules []*nftables.Rule
+	Name   string
+	Addrs  map[string][]byte
+	Config config
+	Rules  []*nftables.Rule
 }
 
 func newRuleManager() *ruleManager {
@@ -51,7 +51,7 @@ func (r *ruleManager) start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("error creating docker client: %v", err)
 	}
-	c, err := nftables.New(nftables.AsLasting())
+	c, err := nftables.New() // TODO: fix GetRules bug and make lasting
 	if err != nil {
 		return fmt.Errorf("error creating netlink connection: %v", err)
 	}
@@ -64,16 +64,15 @@ func (r *ruleManager) start(ctx context.Context) error {
 	createChannel := make(chan *types.ContainerJSON)
 	deleteChannel := make(chan string)
 
-	// TODO: make "2"
-	r.wg.Add(1)
+	r.wg.Add(2)
 	go func() {
 		defer r.wg.Done()
 		r.createRules(createChannel)
 	}()
-	// go func() {
-	// 	defer r.wg.Done()
-	// 	r.deleteUFWRules(deleteChannel)
-	// }()
+	go func() {
+		defer r.wg.Done()
+		r.deleteRules(deleteChannel)
+	}()
 
 	syncContainers(ctx, createChannel, dockerCli)
 	//cleanupRules(ctx, dockerCli)
@@ -87,6 +86,10 @@ func (r *ruleManager) start(ctx context.Context) error {
 			select {
 			case msg := <-messages:
 				if e, ok := msg.Actor.Attributes[enabledLabel]; ok {
+					if msg.Action != "start" && msg.Action != "kill" {
+						continue
+					}
+
 					var enabled bool
 					if err := yaml.Unmarshal([]byte(e), &enabled); err != nil {
 						log.Printf("error parsing %q label: %v", enabledLabel, err)
@@ -110,7 +113,7 @@ func (r *ruleManager) start(ctx context.Context) error {
 						createChannel <- &container
 					}
 					if msg.Action == "kill" {
-						deleteChannel <- msg.ID[:12]
+						deleteChannel <- msg.ID
 					}
 				}
 			case err := <-streamErrs:
@@ -146,8 +149,6 @@ func addFilters(ctx context.Context, client *client.Client) (<-chan events.Messa
 func (r *ruleManager) stop() {
 	r.done <- struct{}{}
 	r.wg.Wait()
-
-	r.nfc.CloseLasting()
 }
 
 func (r *ruleManager) addContainer(id string, container *containerInfo) {
@@ -158,9 +159,16 @@ func (r *ruleManager) addContainer(id string, container *containerInfo) {
 }
 
 func (r *ruleManager) getContainer(id string) (*containerInfo, bool) {
-	r.mtx.RLock()
-	defer r.mtx.RUnlock()
+	r.mtx.Lock()
+	defer r.mtx.Unlock()
 
 	c, ok := r.containers[id]
 	return c, ok
+}
+
+func (r *ruleManager) deleteContainer(id string) {
+	r.mtx.Lock()
+	defer r.mtx.Unlock()
+
+	delete(r.containers, id)
 }

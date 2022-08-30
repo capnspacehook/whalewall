@@ -5,6 +5,7 @@ go 1.19
 require (
 	github.com/docker/docker v20.10.17+incompatible
 	github.com/google/nftables v0.0.0-20220808154552-2eca00135732
+	golang.org/x/exp v0.0.0-20220827204233-334a2380cb91
 	golang.org/x/sys v0.0.0-20220825204002-c680a09ffe64
 	gopkg.in/yaml.v3 v3.0.1
 )
