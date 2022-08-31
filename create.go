@@ -57,60 +57,82 @@ func (r *ruleManager) createRules(ctx context.Context, ch <-chan types.Container
 			continue
 		}
 
-		// TODO: handle IPv6
-		var nftRules []*nftables.Rule
+		create := func(natTable bool) ([]*nftables.Rule, bool) {
+			nftRules := make([]*nftables.Rule, 0, (len(rulesCfg.Input)+len(rulesCfg.Output))*2)
+			chain := r.filterChain
+			set := r.filterDropSet
+			if natTable {
+				chain = r.natChain
+				set = r.natDropSet
+			}
 
-		// handle outbound rules
-		for _, ruleCfg := range rulesCfg.Output {
-			if ruleCfg.Network != "" {
-				nftRules = append(nftRules, r.createNFTRules(false, addrs[ruleCfg.Network], ruleCfg, container.ID)...)
-			} else {
-				for _, addr := range addrs {
-					nftRules = append(nftRules, r.createNFTRules(false, addr, ruleCfg, container.ID)...)
+			// handle outbound rules
+			for _, ruleCfg := range rulesCfg.Output {
+				if ruleCfg.Network != "" {
+					nftRules = append(nftRules,
+						r.createNFTRules(chain, false, addrs[ruleCfg.Network], ruleCfg, container.ID)...,
+					)
+				} else {
+					for _, addr := range addrs {
+						nftRules = append(
+							nftRules, r.createNFTRules(chain, false, addr, ruleCfg, container.ID)...,
+						)
+					}
 				}
 			}
-		}
-
-		// handle inbound rules
-		for _, ruleCfg := range rulesCfg.Input {
-			if ruleCfg.Network != "" {
-				nftRules = append(nftRules, r.createNFTRules(true, addrs[ruleCfg.Network], ruleCfg, container.ID)...)
-			} else {
-				for _, addr := range addrs {
-					nftRules = append(nftRules, r.createNFTRules(true, addr, ruleCfg, container.ID)...)
+			// handle inbound rules
+			for _, ruleCfg := range rulesCfg.Input {
+				if ruleCfg.Network != "" {
+					nftRules = append(
+						nftRules, r.createNFTRules(chain, true, addrs[ruleCfg.Network], ruleCfg, container.ID)...,
+					)
+				} else {
+					for _, addr := range addrs {
+						nftRules = append(
+							nftRules, r.createNFTRules(chain, true, addr, ruleCfg, container.ID)...,
+						)
+					}
 				}
 			}
-		}
-
-		// ensure we aren't creating existing rules
-		if configExists {
-			curRules, err := r.nfc.GetRules(r.chain.Table, r.chain)
-			if err != nil {
-				log.Printf("error getting rules of %q: %v", r.chain.Name, err)
-				continue
-			}
-			for i := range nftRules {
-				if findRule(nftRules[i], curRules) {
-					nftRules = slices.Delete(nftRules, i, i)
+			// ensure we aren't creating existing rules
+			if configExists {
+				curRules, err := r.nfc.GetRules(chain.Table, chain)
+				if err != nil {
+					log.Printf("error getting rules of %q: %v", chain.Name, err)
+					return nil, false
+				}
+				for i := range nftRules {
+					if findRule(nftRules[i], curRules) {
+						nftRules = slices.Delete(nftRules, i, i)
+					}
 				}
 			}
+			// insert rules in reverse order that they were created in to maintain order
+			for i := len(nftRules) - 1; i >= 0; i-- {
+				r.nfc.InsertRule(nftRules[i])
+			}
+
+			// handle deny all out
+			elements := make([]nftables.SetElement, 0, len(addrs))
+			for _, addr := range addrs {
+				elements = append(elements, nftables.SetElement{
+					Key: addr,
+				})
+			}
+			if err := r.nfc.SetAddElements(set, elements); err != nil {
+				log.Printf("error adding set elements: %v", err)
+			}
+
+			return nftRules, true
 		}
 
-		// handle deny all out
-		elements := make([]nftables.SetElement, 0, len(addrs))
-		for _, addr := range addrs {
-			elements = append(elements, nftables.SetElement{
-				Key: addr,
-			})
+		filterRules, ok := create(false)
+		if !ok {
+			continue
 		}
-
-		if err := r.nfc.SetAddElements(r.dropSet, elements); err != nil {
-			log.Printf("error adding set elements: %v", err)
-		}
-
-		// insert rules in reverse order that they were created in to maintain order
-		for i := len(nftRules) - 1; i >= 0; i-- {
-			r.nfc.InsertRule(nftRules[i])
+		natRules, ok := create(true)
+		if !ok {
+			continue
 		}
 
 		if err := r.nfc.Flush(); err != nil {
@@ -119,10 +141,11 @@ func (r *ruleManager) createRules(ctx context.Context, ch <-chan types.Container
 		}
 
 		c := &containerInfo{
-			Name:   containerName,
-			Addrs:  addrs,
-			Config: rulesCfg,
-			Rules:  nftRules,
+			name:        containerName,
+			addrs:       addrs,
+			config:      rulesCfg,
+			filterRules: filterRules,
+			natRules:    natRules,
 		}
 		r.addContainer(container.ID, c)
 	}
@@ -243,14 +266,14 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, dock
 	return true
 }
 
-func (r *ruleManager) createNFTRules(inbound bool, addr []byte, cfg ruleConfig, contID string) []*nftables.Rule {
+func (r *ruleManager) createNFTRules(chain *nftables.Chain, inbound bool, addr []byte, cfg ruleConfig, contID string) []*nftables.Rule {
 	return []*nftables.Rule{
-		r.createNFTRule(inbound, true, addr, cfg, contID),
-		r.createNFTRule(!inbound, false, addr, cfg, contID),
+		r.createNFTRule(chain, inbound, true, addr, cfg, contID),
+		r.createNFTRule(chain, !inbound, false, addr, cfg, contID),
 	}
 }
 
-func (r *ruleManager) createNFTRule(inbound, new bool, addr []byte, cfg ruleConfig, contID string) *nftables.Rule {
+func (r *ruleManager) createNFTRule(chain *nftables.Chain, inbound, new bool, addr []byte, cfg ruleConfig, contID string) *nftables.Rule {
 	addrOffset := srcAddrOffset
 	portOffset := dstPortOffset
 	if inbound {
@@ -382,8 +405,8 @@ func (r *ruleManager) createNFTRule(inbound, new bool, addr []byte, cfg ruleConf
 	)
 
 	return &nftables.Rule{
-		Table:    r.chain.Table,
-		Chain:    r.chain,
+		Table:    chain.Table,
+		Chain:    chain,
 		Exprs:    exprs,
 		UserData: []byte(contID),
 	}
