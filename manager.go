@@ -26,20 +26,17 @@ type ruleManager struct {
 	wg   sync.WaitGroup
 	done chan struct{}
 
-	nfc           *nftables.Conn
-	filterChain   *nftables.Chain
-	natChain      *nftables.Chain
-	filterDropSet *nftables.Set
-	natDropSet    *nftables.Set
-	containers    map[string]*containerInfo
+	nfc        *nftables.Conn
+	chain      *nftables.Chain
+	dropSet    *nftables.Set
+	containers map[string]*containerInfo
 }
 
 type containerInfo struct {
-	name        string
-	addrs       map[string][]byte
-	config      config
-	filterRules []*nftables.Rule
-	natRules    []*nftables.Rule
+	name   string
+	addrs  map[string][]byte
+	config config
+	rules  []*nftables.Rule
 }
 
 func newRuleManager() *ruleManager {

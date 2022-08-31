@@ -15,48 +15,28 @@ func (r *ruleManager) deleteRules(containerID <-chan string) {
 		}
 		log.Printf("deleting rules of %q", c.name)
 
-		delete := func(natTable bool) bool {
-			chain := r.filterChain
-			rules := c.filterRules
-			set := r.filterDropSet
-			if natTable {
-				chain = r.natChain
-				rules = c.natRules
-				set = r.natDropSet
-			}
-
-			// Handle inbound and outbound rules
-			curRules, err := r.nfc.GetRules(chain.Table, chain)
-			if err != nil {
-				log.Printf("error getting rules of %q: %v", chain.Name, err)
-				return false
-			}
-			for i := range rules {
-				if findRule(rules[i], curRules) {
-					r.nfc.DelRule(rules[i])
-				}
-			}
-
-			// Handle deny all out
-			elements := make([]nftables.SetElement, 0, len(c.addrs))
-			for _, addr := range c.addrs {
-				elements = append(elements, nftables.SetElement{
-					Key: addr,
-				})
-			}
-			err = r.nfc.SetDeleteElements(set, elements)
-			if err != nil {
-				log.Printf("error deleting set elements: %v", err)
-			}
-
-			return true
-		}
-
-		if !delete(false) {
+		// Handle inbound and outbound rules
+		curRules, err := r.nfc.GetRules(r.chain.Table, r.chain)
+		if err != nil {
+			log.Printf("error getting rules of %q: %v", r.chain.Name, err)
 			continue
 		}
-		if !delete(true) {
-			continue
+		for i := range c.rules {
+			if findRule(c.rules[i], curRules) {
+				r.nfc.DelRule(c.rules[i])
+			}
+		}
+
+		// Handle deny all out
+		elements := make([]nftables.SetElement, 0, len(c.addrs))
+		for _, addr := range c.addrs {
+			elements = append(elements, nftables.SetElement{
+				Key: addr,
+			})
+		}
+		err = r.nfc.SetDeleteElements(r.dropSet, elements)
+		if err != nil {
+			log.Printf("error deleting set elements: %v", err)
 		}
 
 		if err := r.nfc.Flush(); err != nil {
