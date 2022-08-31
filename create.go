@@ -22,6 +22,10 @@ const (
 	dstAddrOffset = 16
 	srcPortOffset = 0
 	dstPortOffset = 2
+
+	stateNew    = expr.CtStateBitNEW
+	stateEst    = expr.CtStateBitESTABLISHED | expr.CtStateBitRELATED
+	stateNewEst = stateNew | stateEst
 )
 
 func (r *ruleManager) createRules(ctx context.Context, ch <-chan types.ContainerJSON, dockerCli *client.Client) {
@@ -88,6 +92,7 @@ func (r *ruleManager) createRules(ctx context.Context, ch <-chan types.Container
 			}
 		}
 		// ensure we aren't creating existing rules
+		allRules := slices.Clone(nftRules)
 		if configExists {
 			curRules, err := r.nfc.GetRules(r.chain.Table, r.chain)
 			if err != nil {
@@ -125,7 +130,7 @@ func (r *ruleManager) createRules(ctx context.Context, ch <-chan types.Container
 			name:   containerName,
 			addrs:  addrs,
 			config: rulesCfg,
-			rules:  nftRules,
+			rules:  allRules,
 		}
 		r.addContainer(container.ID, c)
 	}
@@ -247,13 +252,50 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, dock
 }
 
 func (r *ruleManager) createNFTRules(inbound bool, addr []byte, cfg ruleConfig, contID string) []*nftables.Rule {
-	return []*nftables.Rule{
-		r.createNFTRule(inbound, true, addr, cfg, contID),
-		r.createNFTRule(!inbound, false, addr, cfg, contID),
+	rules := make([]*nftables.Rule, 0, 3)
+	if cfg.Queue == 0 {
+		return append(rules,
+			r.createNFTRule(inbound, stateNewEst, addr, cfg, 0, contID),
+			r.createNFTRule(!inbound, stateEst, addr, cfg, 0, contID),
+		)
 	}
+
+	if inbound && cfg.Queue == cfg.InputEstQueue {
+		// if rule is inbound and queue and established inbound queue
+		// are the same, create one rule for inbound traffic
+		rules = append(rules,
+			r.createNFTRule(true, stateNewEst, addr, cfg, cfg.Queue, contID),
+			r.createNFTRule(false, stateEst, addr, cfg, cfg.OutputEstQueue, contID),
+		)
+	} else if !inbound && cfg.Queue == cfg.OutputEstQueue {
+		// if rule is outbound and queue and established outbound queue
+		// are the same, create one rule for outbound traffic
+		rules = append(rules,
+			r.createNFTRule(false, stateNewEst, addr, cfg, cfg.Queue, contID),
+			r.createNFTRule(true, stateEst, addr, cfg, cfg.InputEstQueue, contID),
+		)
+	} else if inbound {
+		// if rule is inbound and queue and established inbound queue
+		// are different, need to create separate rules for them
+		rules = append(rules,
+			r.createNFTRule(true, stateNew, addr, cfg, cfg.Queue, contID),
+			r.createNFTRule(true, stateEst, addr, cfg, cfg.InputEstQueue, contID),
+			r.createNFTRule(false, stateEst, addr, cfg, cfg.OutputEstQueue, contID),
+		)
+	} else if !inbound {
+		// if rule is outbound and queue and established outbound queue
+		// are different, need to create separate rules for them
+		rules = append(rules,
+			r.createNFTRule(false, stateNew, addr, cfg, cfg.Queue, contID),
+			r.createNFTRule(false, stateEst, addr, cfg, cfg.OutputEstQueue, contID),
+			r.createNFTRule(true, stateEst, addr, cfg, cfg.InputEstQueue, contID),
+		)
+	}
+
+	return rules
 }
 
-func (r *ruleManager) createNFTRule(inbound, new bool, addr []byte, cfg ruleConfig, contID string) *nftables.Rule {
+func (r *ruleManager) createNFTRule(inbound bool, state uint32, addr []byte, cfg ruleConfig, queueNum uint16, contID string) *nftables.Rule {
 	addrOffset := srcAddrOffset
 	portOffset := dstPortOffset
 	if inbound {
@@ -263,10 +305,6 @@ func (r *ruleManager) createNFTRule(inbound, new bool, addr []byte, cfg ruleConf
 	proto := unix.IPPROTO_TCP
 	if cfg.Proto == "udp" {
 		proto = unix.IPPROTO_UDP
-	}
-	connState := expr.CtStateBitESTABLISHED | expr.CtStateBitRELATED
-	if new {
-		connState |= expr.CtStateBitNEW
 	}
 
 	exprs := make([]expr.Any, 0, 13)
@@ -369,7 +407,7 @@ func (r *ruleManager) createNFTRule(inbound, new bool, addr []byte, cfg ruleConf
 			SourceRegister: 1,
 			DestRegister:   1,
 			Len:            4,
-			Mask:           binary.LittleEndian.AppendUint32(nil, connState),
+			Mask:           binary.LittleEndian.AppendUint32(nil, state),
 			Xor:            []byte{0, 0, 0, 0},
 		},
 		// [ cmp neq reg 1 0x00000000 ]
@@ -379,10 +417,27 @@ func (r *ruleManager) createNFTRule(inbound, new bool, addr []byte, cfg ruleConf
 			Data:     []byte{0, 0, 0, 0},
 		},
 		&expr.Counter{},
-		&expr.Verdict{
-			Kind: expr.VerdictAccept,
-		},
 	)
+	if cfg.Chain != "" {
+		exprs = append(exprs,
+			&expr.Verdict{
+				Kind:  expr.VerdictJump,
+				Chain: cfg.Chain,
+			},
+		)
+	} else if queueNum != 0 {
+		exprs = append(exprs,
+			&expr.Queue{
+				Num: queueNum,
+			},
+		)
+	} else {
+		exprs = append(exprs,
+			&expr.Verdict{
+				Kind: expr.VerdictAccept,
+			},
+		)
+	}
 
 	return &nftables.Rule{
 		Table:    r.chain.Table,
