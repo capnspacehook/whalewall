@@ -2,19 +2,25 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"log"
 
 	"github.com/google/nftables"
 )
 
-func (r *ruleManager) deleteRules(containerID <-chan string) {
+func (r *ruleManager) deleteRules(ctx context.Context, containerID <-chan string) {
 	for id := range containerID {
-		c, ok := r.getContainer(id)
-		if !ok {
-			log.Printf("container %s not found", id)
+		name, err := r.db.GetContainerName(ctx, id)
+		if err != nil {
+			log.Printf("error getting name of container %s: %v", id, err)
 			continue
 		}
-		log.Printf("deleting rules of %q", c.name)
+		addrs, err := r.db.GetContainerAddrs(ctx, id)
+		if err != nil {
+			log.Printf("error getting IPs of container %s: %v", id, err)
+			continue
+		}
+		log.Printf("deleting rules of %q", name)
 
 		// Handle inbound and outbound rules
 		curRules, err := r.nfc.GetRules(r.chain.Table, r.chain)
@@ -30,11 +36,11 @@ func (r *ruleManager) deleteRules(containerID <-chan string) {
 		}
 
 		// Handle deny all out
-		elements := make([]nftables.SetElement, 0, len(c.addrs))
-		for _, addr := range c.addrs {
-			elements = append(elements, nftables.SetElement{
+		elements := make([]nftables.SetElement, len(addrs))
+		for i, addr := range addrs {
+			elements[i] = nftables.SetElement{
 				Key: addr,
-			})
+			}
 		}
 		err = r.nfc.SetDeleteElements(r.dropSet, elements)
 		if err != nil {
@@ -42,10 +48,10 @@ func (r *ruleManager) deleteRules(containerID <-chan string) {
 		}
 
 		if err := r.nfc.Flush(); err != nil {
-			log.Printf("error flushing commands: %v", err)
+			log.Printf("error flushing nftables commands: %v", err)
 			continue
 		}
 
-		r.deleteContainer(id)
+		r.deleteContainer(ctx, id)
 	}
 }

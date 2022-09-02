@@ -2,18 +2,24 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
+	"os"
 	"sync"
 
+	"github.com/capnspacehook/whalewall/database"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
 	"github.com/google/nftables"
 	"gopkg.in/yaml.v3"
+	_ "modernc.org/sqlite"
 )
 
 const (
@@ -21,32 +27,52 @@ const (
 	rulesLabel   = "whalewall.rules"
 )
 
+//go:embed database/schema.sql
+var dbSchema string
+
 type ruleManager struct {
-	mtx  sync.Mutex
 	wg   sync.WaitGroup
 	done chan struct{}
 
-	nfc        *nftables.Conn
-	chain      *nftables.Chain
-	dropSet    *nftables.Set
-	containers map[string]*containerInfo
-}
-
-type containerInfo struct {
-	name   string
-	addrs  map[string][]byte
-	config config
+	db        *database.DB
+	dockerCli *client.Client
+	nfc       *nftables.Conn
+	chain     *nftables.Chain
+	dropSet   *nftables.Set
 }
 
 func newRuleManager() *ruleManager {
 	return &ruleManager{
-		done:       make(chan struct{}),
-		containers: make(map[string]*containerInfo),
+		done: make(chan struct{}),
 	}
 }
 
-func (r *ruleManager) start(ctx context.Context) error {
-	dockerCli, err := client.NewClientWithOpts(client.FromEnv)
+func (r *ruleManager) start(ctx context.Context, dbFile string) error {
+	var dbNotExist bool
+	_, err := os.Stat(dbFile)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			dbNotExist = true
+		} else {
+			return err
+		}
+	}
+
+	sqlDB, err := sql.Open("sqlite", dbFile)
+	if err != nil {
+		return fmt.Errorf("error opening database: %v", err)
+	}
+	if dbNotExist {
+		if _, err := sqlDB.ExecContext(ctx, dbSchema); err != nil {
+			return fmt.Errorf("error creating tables in database: %v", err)
+		}
+	}
+	r.db, err = database.NewDB(ctx, sqlDB)
+	if err != nil {
+		return fmt.Errorf("error preparing database queries: %v", err)
+	}
+
+	r.dockerCli, err = client.NewClientWithOpts(client.FromEnv)
 	if err != nil {
 		return fmt.Errorf("error creating docker client: %v", err)
 	}
@@ -66,21 +92,21 @@ func (r *ruleManager) start(ctx context.Context) error {
 	r.wg.Add(2)
 	go func() {
 		defer r.wg.Done()
-		r.createRules(ctx, createChannel, dockerCli)
+		r.createRules(ctx, createChannel)
 	}()
 	go func() {
 		defer r.wg.Done()
-		r.deleteRules(deleteChannel)
+		r.deleteRules(ctx, deleteChannel)
 	}()
 
-	syncContainers(ctx, createChannel, dockerCli)
-	//cleanupRules(ctx, dockerCli)
+	r.cleanupRules(ctx)
+	r.syncContainers(ctx, createChannel)
 
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
 
-		messages, streamErrs := addFilters(ctx, dockerCli)
+		messages, streamErrs := addFilters(ctx, r.dockerCli)
 		for {
 			select {
 			case msg := <-messages:
@@ -99,7 +125,7 @@ func (r *ruleManager) start(ctx context.Context) error {
 					}
 
 					if msg.Action == "start" {
-						container, err := dockerCli.ContainerInspect(ctx, msg.ID)
+						container, err := r.dockerCli.ContainerInspect(ctx, msg.ID)
 						if err != nil {
 							log.Printf("error inspecting container: %v", err)
 							continue
@@ -121,11 +147,11 @@ func (r *ruleManager) start(ctx context.Context) error {
 					log.Printf("error reading docker event stream: %v", err)
 				}
 				log.Println("recreating docker client")
-				dockerCli, err = client.NewClientWithOpts(client.FromEnv)
+				r.dockerCli, err = client.NewClientWithOpts(client.FromEnv)
 				if err != nil {
 					log.Fatalf("error creating docker client: %v", err)
 				}
-				messages, streamErrs = addFilters(ctx, dockerCli)
+				messages, streamErrs = addFilters(ctx, r.dockerCli)
 			case <-r.done:
 				close(createChannel)
 				close(deleteChannel)
@@ -158,26 +184,11 @@ func addFilters(ctx context.Context, client *client.Client) (<-chan events.Messa
 func (r *ruleManager) stop() {
 	r.done <- struct{}{}
 	r.wg.Wait()
-}
 
-func (r *ruleManager) addContainer(id string, container *containerInfo) {
-	r.mtx.Lock()
-	defer r.mtx.Unlock()
-
-	r.containers[id] = container
-}
-
-func (r *ruleManager) getContainer(id string) (*containerInfo, bool) {
-	r.mtx.Lock()
-	defer r.mtx.Unlock()
-
-	c, ok := r.containers[id]
-	return c, ok
-}
-
-func (r *ruleManager) deleteContainer(id string) {
-	r.mtx.Lock()
-	defer r.mtx.Unlock()
-
-	delete(r.containers, id)
+	if err := r.dockerCli.Close(); err != nil {
+		log.Printf("error closing docker client: %v", err)
+	}
+	if err := r.db.Close(); err != nil {
+		log.Printf("error closing database: %v", err)
+	}
 }

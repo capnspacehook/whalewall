@@ -15,7 +15,7 @@ func main() {
 
 	r := newRuleManager()
 	log.Println("starting")
-	err := r.start(ctx)
+	err := r.start(ctx, "db.sqlite")
 	if err != nil {
 		log.Fatalf("error starting: %v", err)
 	}

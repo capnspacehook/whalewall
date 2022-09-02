@@ -202,7 +202,7 @@ func (r *ruleManager) createBaseRules() error {
 	}
 
 	if err := r.nfc.Flush(); err != nil {
-		return fmt.Errorf("error flushing commands: %v", err)
+		return fmt.Errorf("error flushing nftables commands: %v", err)
 	}
 
 	return nil

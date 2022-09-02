@@ -9,7 +9,6 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/client"
 	"github.com/google/nftables"
 	"github.com/google/nftables/expr"
 	"golang.org/x/exp/slices"
@@ -28,7 +27,7 @@ const (
 	stateNewEst = stateNew | stateEst
 )
 
-func (r *ruleManager) createRules(ctx context.Context, ch <-chan types.ContainerJSON, dockerCli *client.Client) {
+func (r *ruleManager) createRules(ctx context.Context, ch <-chan types.ContainerJSON) {
 	for container := range ch {
 		// container name appears with prefix "/"
 		containerName := strings.Replace(container.Name, "/", "", 1)
@@ -57,7 +56,7 @@ func (r *ruleManager) createRules(ctx context.Context, ch <-chan types.Container
 			addrs[netName] = ref(addr.As4())[:]
 		}
 
-		if configExists && !r.validateRuleNetworks(ctx, rulesCfg, dockerCli, addrs) {
+		if configExists && !r.validateRuleNetworks(ctx, rulesCfg, addrs) {
 			continue
 		}
 
@@ -121,20 +120,15 @@ func (r *ruleManager) createRules(ctx context.Context, ch <-chan types.Container
 		}
 
 		if err := r.nfc.Flush(); err != nil {
-			log.Printf("error flushing commands: %v", err)
+			log.Printf("error flushing nftables commands: %v", err)
 			continue
 		}
 
-		c := &containerInfo{
-			name:   containerName,
-			addrs:  addrs,
-			config: rulesCfg,
-		}
-		r.addContainer(container.ID, c)
+		r.addContainer(ctx, container.ID, containerName, addrs)
 	}
 }
 
-func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, dockerCli *client.Client, addrs map[string][]byte) bool {
+func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addrs map[string][]byte) bool {
 	var listedConts []types.Container
 	var err error
 
@@ -149,7 +143,7 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, dock
 			Key:   "status",
 			Value: "running",
 		})
-		listedConts, err = dockerCli.ContainerList(ctx, types.ContainerListOptions{Filters: filter})
+		listedConts, err = r.dockerCli.ContainerList(ctx, types.ContainerListOptions{Filters: filter})
 		if err != nil {
 			log.Printf("error listing running containers: %v", err)
 			return false
@@ -192,7 +186,7 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, dock
 
 					container, ok := containers[ruleCfg.Container]
 					if !ok {
-						container, err = dockerCli.ContainerInspect(ctx, listedCont.ID)
+						container, err = r.dockerCli.ContainerInspect(ctx, listedCont.ID)
 						if err != nil {
 							log.Printf("error inspecting container %s: %v", ruleCfg.Container, err)
 							return false

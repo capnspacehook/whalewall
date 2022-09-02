@@ -6,23 +6,22 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/client"
 	"gopkg.in/yaml.v3"
 )
 
-func syncContainers(ctx context.Context, createChannel chan types.ContainerJSON, client *client.Client) {
+func (r *ruleManager) syncContainers(ctx context.Context, createChannel chan types.ContainerJSON) {
 	filter := filters.NewArgs(filters.KeyValuePair{
 		Key:   "label",
 		Value: enabledLabel,
 	})
-	containers, err := client.ContainerList(ctx, types.ContainerListOptions{Filters: filter})
+	containers, err := r.dockerCli.ContainerList(ctx, types.ContainerListOptions{Filters: filter})
 	if err != nil {
 		log.Println(err)
 		return
 	}
 
 	for _, c := range containers {
-		container, err := client.ContainerInspect(ctx, c.ID)
+		container, err := r.dockerCli.ContainerInspect(ctx, c.ID)
 		if err != nil {
 			log.Printf("error inspecting container: %v", err)
 			continue
