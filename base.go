@@ -83,6 +83,7 @@ func (r *ruleManager) createBaseRules() error {
 	}
 
 	// add rule to jump from INPUT/OUTPUT chains to whalewall chain
+	// TODO: create OUTPUT if not exists
 	for _, name := range []string{inputChainName, outputChainName} {
 		mainChain := &nftables.Chain{
 			Name:  name,
@@ -201,12 +202,15 @@ func rulesEqual(r1, r2 *nftables.Rule) bool {
 	}
 
 	for i := range r1.Exprs {
+		_, e1Ctr := r1.Exprs[i].(*expr.Counter)
+		_, e2Ctr := r2.Exprs[i].(*expr.Counter)
+		// expressions are not of same type, rules are different
+		if e1Ctr != e2Ctr {
+			return false
+		}
 		// skip comparing counters, they will probably have different
 		// number of packets/bytes counted
-		if _, ok := r1.Exprs[i].(*expr.Counter); ok {
-			continue
-		}
-		if _, ok := r2.Exprs[i].(*expr.Counter); ok {
+		if e1Ctr && e2Ctr {
 			continue
 		}
 

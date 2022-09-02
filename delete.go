@@ -1,12 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"log"
 
 	"github.com/google/nftables"
 )
 
-// TODO: queue rules never get deleted?
 func (r *ruleManager) deleteRules(containerID <-chan string) {
 	for id := range containerID {
 		c, ok := r.getContainer(id)
@@ -22,9 +22,10 @@ func (r *ruleManager) deleteRules(containerID <-chan string) {
 			log.Printf("error getting rules of %q: %v", r.chain.Name, err)
 			continue
 		}
-		for i := range c.rules {
-			if findRule(c.rules[i], curRules) {
-				r.nfc.DelRule(c.rules[i])
+		idb := []byte(id)
+		for i := range curRules {
+			if bytes.Equal(idb, curRules[i].UserData) {
+				r.nfc.DelRule(curRules[i])
 			}
 		}
 

@@ -92,7 +92,6 @@ func (r *ruleManager) createRules(ctx context.Context, ch <-chan types.Container
 			}
 		}
 		// ensure we aren't creating existing rules
-		allRules := slices.Clone(nftRules)
 		if configExists {
 			curRules, err := r.nfc.GetRules(r.chain.Table, r.chain)
 			if err != nil {
@@ -130,7 +129,6 @@ func (r *ruleManager) createRules(ctx context.Context, ch <-chan types.Container
 			name:   containerName,
 			addrs:  addrs,
 			config: rulesCfg,
-			rules:  allRules,
 		}
 		r.addContainer(container.ID, c)
 	}

@@ -36,7 +36,6 @@ type containerInfo struct {
 	name   string
 	addrs  map[string][]byte
 	config config
-	rules  []*nftables.Rule
 }
 
 func newRuleManager() *ruleManager {
@@ -136,8 +135,20 @@ func (r *ruleManager) start(ctx context.Context) error {
 }
 
 func addFilters(ctx context.Context, client *client.Client) (<-chan events.Message, <-chan error) {
-	filter := filters.NewArgs()
-	filter.Add("type", "container")
+	filter := filters.NewArgs(
+		filters.KeyValuePair{
+			Key:   "type",
+			Value: "container",
+		},
+		filters.KeyValuePair{
+			Key:   "event",
+			Value: "start",
+		},
+		filters.KeyValuePair{
+			Key:   "event",
+			Value: "kill",
+		},
+	)
 	return client.Events(ctx, types.EventsOptions{Filters: filter})
 }
 
