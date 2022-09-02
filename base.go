@@ -29,12 +29,25 @@ func (r *ruleManager) createBaseRules() error {
 	if err != nil {
 		return fmt.Errorf("error listing IPv4 chains: %v", err)
 	}
-	var dockerChain *nftables.Chain
+	var (
+		dockerChain *nftables.Chain
+		inputChain  *nftables.Chain
+		outputChain *nftables.Chain
+	)
 	for _, c := range chains {
-		if c.Name == dockerChainName {
+		if c.Table.Name != filterTableName {
+			continue
+		}
+
+		switch c.Name {
+		case dockerChainName:
 			dockerChain = c
-		} else if c.Name == chainName {
+		case chainName:
 			r.chain = c
+		case inputChainName:
+			inputChain = c
+		case outputChainName:
+			outputChain = c
 		}
 	}
 	if dockerChain == nil {
@@ -83,20 +96,38 @@ func (r *ruleManager) createBaseRules() error {
 	}
 
 	// add rule to jump from INPUT/OUTPUT chains to whalewall chain
-	// TODO: create OUTPUT if not exists
-	for _, name := range []string{inputChainName, outputChainName} {
-		mainChain := &nftables.Chain{
-			Name:  name,
-			Table: filterTable,
+	handleMainChain := func(name string, hook nftables.ChainHook, mainChain *nftables.Chain) error {
+		if mainChain == nil {
+			log.Printf("creating %s chain", name)
+			// INPUT and OUTPUT sometimes don't exist in nftables
+			mainChain = &nftables.Chain{
+				Name:     name,
+				Table:    filterTable,
+				Hooknum:  hook,
+				Priority: nftables.ChainPriorityFilter,
+				Type:     nftables.ChainTypeFilter,
+				Policy:   ref(nftables.ChainPolicyAccept),
+			}
+			r.nfc.AddChain(mainChain)
 		}
+
 		rules, err := r.nfc.GetRules(filterTable, mainChain)
 		if err != nil {
 			return fmt.Errorf("error listing rules of %q chain: %v", name, err)
 		}
 		jumpRule.Chain = mainChain
 		if !findRule(jumpRule, rules) {
+			// TODO: this won't work with OUTPUT for some reason? Might be nftables bug
 			r.nfc.InsertRule(jumpRule)
 		}
+
+		return nil
+	}
+	if err := handleMainChain(inputChainName, nftables.ChainHookInput, inputChain); err != nil {
+		return err
+	}
+	if err := handleMainChain(outputChainName, nftables.ChainHookOutput, outputChain); err != nil {
+		return err
 	}
 
 	r.dropSet = &nftables.Set{

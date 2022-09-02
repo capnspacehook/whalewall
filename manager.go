@@ -111,7 +111,10 @@ func (r *ruleManager) start(ctx context.Context) error {
 					}
 				}
 			case err := <-streamErrs:
-				if errors.Is(err, context.Canceled) {
+				// nil errors or context.Canceled will sometimes be sent
+				// when the context is canceled, continue until the
+				// manager is stopped
+				if err == nil || errors.Is(err, context.Canceled) {
 					continue
 				}
 				if !errors.Is(err, io.EOF) {
