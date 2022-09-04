@@ -21,6 +21,7 @@ func (r *ruleManager) syncContainers(ctx context.Context, createChannel chan typ
 	}
 
 	for _, c := range containers {
+		// TODO: only inspect/send if not in DB
 		container, err := r.dockerCli.ContainerInspect(ctx, c.ID)
 		if err != nil {
 			log.Printf("error inspecting container: %v", err)

@@ -37,6 +37,7 @@ func (r *ruleManager) cleanupRules(ctx context.Context) error {
 	return nil
 }
 
+// TODO: if one rule/element is not present all will fail to be deleted
 func (r *ruleManager) clean(ctx context.Context, id string) {
 	rules, err := r.nfc.GetRules(r.chain.Table, r.chain)
 	if err != nil {
