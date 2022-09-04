@@ -30,6 +30,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.addContainerAddrStmt, err = db.PrepareContext(ctx, addContainerAddr); err != nil {
 		return nil, fmt.Errorf("error preparing query AddContainerAddr: %w", err)
 	}
+	if q.containerExistsStmt, err = db.PrepareContext(ctx, containerExists); err != nil {
+		return nil, fmt.Errorf("error preparing query ContainerExists: %w", err)
+	}
 	if q.deleteContainerStmt, err = db.PrepareContext(ctx, deleteContainer); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteContainer: %w", err)
 	}
@@ -58,6 +61,11 @@ func (q *Queries) Close() error {
 	if q.addContainerAddrStmt != nil {
 		if cerr := q.addContainerAddrStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing addContainerAddrStmt: %w", cerr)
+		}
+	}
+	if q.containerExistsStmt != nil {
+		if cerr := q.containerExistsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing containerExistsStmt: %w", cerr)
 		}
 	}
 	if q.deleteContainerStmt != nil {
@@ -126,6 +134,7 @@ type Queries struct {
 	tx                       *sql.Tx
 	addContainerStmt         *sql.Stmt
 	addContainerAddrStmt     *sql.Stmt
+	containerExistsStmt      *sql.Stmt
 	deleteContainerStmt      *sql.Stmt
 	deleteContainerAddrsStmt *sql.Stmt
 	getContainerAddrsStmt    *sql.Stmt
@@ -139,6 +148,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		tx:                       tx,
 		addContainerStmt:         q.addContainerStmt,
 		addContainerAddrStmt:     q.addContainerAddrStmt,
+		containerExistsStmt:      q.containerExistsStmt,
 		deleteContainerStmt:      q.deleteContainerStmt,
 		deleteContainerAddrsStmt: q.deleteContainerAddrsStmt,
 		getContainerAddrsStmt:    q.getContainerAddrsStmt,

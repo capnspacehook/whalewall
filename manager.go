@@ -48,40 +48,9 @@ func newRuleManager() *ruleManager {
 }
 
 func (r *ruleManager) start(ctx context.Context, dbFile string) error {
-	var dbNotExist bool
-	_, err := os.Stat(dbFile)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			dbNotExist = true
-		} else {
-			return err
-		}
+	if err := r.init(ctx, dbFile); err != nil {
+		return err
 	}
-
-	sqlDB, err := sql.Open("sqlite", dbFile)
-	if err != nil {
-		return fmt.Errorf("error opening database: %v", err)
-	}
-	if dbNotExist {
-		if _, err := sqlDB.ExecContext(ctx, dbSchema); err != nil {
-			return fmt.Errorf("error creating tables in database: %v", err)
-		}
-	}
-	r.db, err = database.NewDB(ctx, sqlDB)
-	if err != nil {
-		return fmt.Errorf("error preparing database queries: %v", err)
-	}
-
-	r.dockerCli, err = client.NewClientWithOpts(client.FromEnv)
-	if err != nil {
-		return fmt.Errorf("error creating docker client: %v", err)
-	}
-	c, err := nftables.New() // TODO: fix GetRules bug and make lasting
-	if err != nil {
-		return fmt.Errorf("error creating netlink connection: %v", err)
-	}
-	r.nfc = c
-
 	if err := r.createBaseRules(); err != nil {
 		return fmt.Errorf("error creating base rules: %v", err)
 	}
@@ -99,8 +68,12 @@ func (r *ruleManager) start(ctx context.Context, dbFile string) error {
 		r.deleteRules(ctx, deleteChannel)
 	}()
 
-	r.cleanupRules(ctx)
-	r.syncContainers(ctx, createChannel)
+	if err := r.cleanupRules(ctx); err != nil {
+		log.Printf("error cleaning up rules: %v", err)
+	}
+	if err := r.syncContainers(ctx, createChannel); err != nil {
+		log.Printf("error syncing containers: %v", err)
+	}
 
 	r.wg.Add(1)
 	go func() {
@@ -159,6 +132,44 @@ func (r *ruleManager) start(ctx context.Context, dbFile string) error {
 			}
 		}
 	}()
+
+	return nil
+}
+
+func (r *ruleManager) init(ctx context.Context, dbFile string) error {
+	var dbNotExist bool
+	_, err := os.Stat(dbFile)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			dbNotExist = true
+		} else {
+			return err
+		}
+	}
+
+	sqlDB, err := sql.Open("sqlite", dbFile)
+	if err != nil {
+		return fmt.Errorf("error opening database: %v", err)
+	}
+	if dbNotExist {
+		if _, err := sqlDB.ExecContext(ctx, dbSchema); err != nil {
+			return fmt.Errorf("error creating tables in database: %v", err)
+		}
+	}
+	r.db, err = database.NewDB(ctx, sqlDB)
+	if err != nil {
+		return fmt.Errorf("error preparing database queries: %v", err)
+	}
+
+	r.dockerCli, err = client.NewClientWithOpts(client.FromEnv)
+	if err != nil {
+		return fmt.Errorf("error creating docker client: %v", err)
+	}
+	c, err := nftables.New() // TODO: fix GetRules bug and make lasting
+	if err != nil {
+		return fmt.Errorf("error creating netlink connection: %v", err)
+	}
+	r.nfc = c
 
 	return nil
 }

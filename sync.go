@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 
 	"github.com/docker/docker/api/types"
@@ -9,19 +10,33 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func (r *ruleManager) syncContainers(ctx context.Context, createChannel chan types.ContainerJSON) {
+func (r *ruleManager) syncContainers(ctx context.Context, createChannel chan types.ContainerJSON) error {
 	filter := filters.NewArgs(filters.KeyValuePair{
 		Key:   "label",
 		Value: enabledLabel,
 	})
 	containers, err := r.dockerCli.ContainerList(ctx, types.ContainerListOptions{Filters: filter})
 	if err != nil {
-		log.Println(err)
-		return
+		return fmt.Errorf("error listing containers: %v", err)
 	}
 
 	for _, c := range containers {
-		// TODO: only inspect/send if not in DB
+		e, err := r.db.ContainerExists(ctx, c.ID)
+		if err != nil {
+			log.Printf("error querying container %q from database: %v", c.ID, err)
+			continue
+		}
+		exists, ok := e.(int64)
+		if !ok {
+			return fmt.Errorf("got unexpected type from SQL query: %T", e)
+		}
+		if exists == 1 {
+			// we are aware of container and have created rules for it
+			// TODO: should rules still try and be created, but container
+			// not added to DB just in case some were deleted?
+			continue
+		}
+
 		container, err := r.dockerCli.ContainerInspect(ctx, c.ID)
 		if err != nil {
 			log.Printf("error inspecting container: %v", err)
@@ -39,4 +54,6 @@ func (r *ruleManager) syncContainers(ctx context.Context, createChannel chan typ
 			}
 		}
 	}
+
+	return nil
 }

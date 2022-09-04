@@ -5,6 +5,17 @@ SELECT
 FROM
 	containers;
 
+-- name: ContainerExists :one
+SELECT
+	EXISTS (
+		SELECT
+			1
+		FROM
+			containers
+		WHERE
+			id = ?
+	);
+
 -- name: GetContainerName :one
 SELECT
 	name

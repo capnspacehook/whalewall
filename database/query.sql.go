@@ -49,6 +49,25 @@ func (q *Queries) AddContainerAddr(ctx context.Context, arg AddContainerAddrPara
 	return err
 }
 
+const containerExists = `-- name: ContainerExists :one
+SELECT
+	EXISTS (
+		SELECT
+			1
+		FROM
+			containers
+		WHERE
+			id = ?
+	)
+`
+
+func (q *Queries) ContainerExists(ctx context.Context, id string) (interface{}, error) {
+	row := q.queryRow(ctx, q.containerExistsStmt, containerExists, id)
+	var column_1 interface{}
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const deleteContainer = `-- name: DeleteContainer :exec
 DELETE FROM
 	containers
