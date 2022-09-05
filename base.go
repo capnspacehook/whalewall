@@ -59,10 +59,9 @@ func (r *ruleManager) createBaseRules() error {
 	var addDropRules bool
 	if r.chain == nil {
 		r.chain = r.nfc.AddChain(&nftables.Chain{
-			Name:   chainName,
-			Table:  filterTable,
-			Type:   nftables.ChainTypeFilter,
-			Legacy: true,
+			Name:  chainName,
+			Table: filterTable,
+			Type:  nftables.ChainTypeFilter,
 		})
 		addDropRules = true
 	} else {
@@ -96,7 +95,7 @@ func (r *ruleManager) createBaseRules() error {
 	}
 
 	// add rule to jump from INPUT/OUTPUT chains to whalewall chain
-	handleMainChain := func(name string, hook nftables.ChainHook, mainChain *nftables.Chain) error {
+	handleMainChain := func(name string, hook *nftables.ChainHook, mainChain *nftables.Chain) error {
 		if mainChain == nil {
 			log.Printf("creating %s chain", name)
 			// INPUT and OUTPUT sometimes don't exist in nftables
@@ -117,7 +116,6 @@ func (r *ruleManager) createBaseRules() error {
 		}
 		jumpRule.Chain = mainChain
 		if !findRule(jumpRule, rules) {
-			// TODO: this won't work with OUTPUT for some reason? Might be nftables bug
 			r.nfc.InsertRule(jumpRule)
 		}
 

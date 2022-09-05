@@ -53,9 +53,7 @@ func (r *ruleManager) createRules(ctx context.Context, ch <-chan types.Container
 				log.Printf("error parsing IP of container: %q: %v", containerName, err)
 				continue
 			}
-			addrb := ref(addr.As4())[:]
-			reverse(addrb)
-			addrs[netName] = addrb
+			addrs[netName] = ref(addr.As4())[:]
 		}
 
 		if configExists && !r.validateRuleNetworks(ctx, rulesCfg, addrs) {
@@ -443,12 +441,4 @@ func (r *ruleManager) createNFTRule(inbound bool, state uint32, addr []byte, cfg
 
 func ref[T any](v T) *T {
 	return &v
-}
-
-// adapted from https://github.com/golang/go/wiki/SliceTricks#reversing
-func reverse[S ~[]E, E any](s S) {
-	for i := len(s)/2 - 1; i >= 0; i-- {
-		opp := len(s) - 1 - i
-		s[i], s[opp] = s[opp], s[i]
-	}
 }
