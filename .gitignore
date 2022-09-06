@@ -21,3 +21,5 @@
 
 *.code-workspace
 whalewall
+db.sqlite
+cmd/cmd
