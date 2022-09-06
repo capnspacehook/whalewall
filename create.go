@@ -67,20 +67,6 @@ func (r *ruleManager) createRules(ctx context.Context, ch <-chan types.Container
 
 			nftRules := make([]*nftables.Rule, 0, (len(rulesCfg.Input)+len(rulesCfg.Output))*2)
 
-			// handle outbound rules
-			for _, ruleCfg := range rulesCfg.Output {
-				if ruleCfg.Network != "" {
-					nftRules = append(nftRules,
-						r.createNFTRules(false, addrs[ruleCfg.Network], ruleCfg, container.ID)...,
-					)
-				} else {
-					for _, addr := range addrs {
-						nftRules = append(
-							nftRules, r.createNFTRules(false, addr, ruleCfg, container.ID)...,
-						)
-					}
-				}
-			}
 			// handle inbound rules
 			for _, ruleCfg := range rulesCfg.Input {
 				if ruleCfg.Network != "" {
@@ -91,6 +77,20 @@ func (r *ruleManager) createRules(ctx context.Context, ch <-chan types.Container
 					for _, addr := range addrs {
 						nftRules = append(
 							nftRules, r.createNFTRules(true, addr, ruleCfg, container.ID)...,
+						)
+					}
+				}
+			}
+			// handle outbound rules
+			for _, ruleCfg := range rulesCfg.Output {
+				if ruleCfg.Network != "" {
+					nftRules = append(nftRules,
+						r.createNFTRules(false, addrs[ruleCfg.Network], ruleCfg, container.ID)...,
+					)
+				} else {
+					for _, addr := range addrs {
+						nftRules = append(
+							nftRules, r.createNFTRules(false, addr, ruleCfg, container.ID)...,
 						)
 					}
 				}
@@ -162,21 +162,19 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addr
 		for i, ruleCfg := range rulesCfg {
 			// ensure the specified network exist
 			if ruleCfg.Network != "" {
-				if _, ok := addrs[ruleCfg.Network]; !ok {
-					// docker compose will prepend "docker_" to network names
-					dockerNetName := "docker_" + ruleCfg.Network
-					addr, ok := addrs[dockerNetName]
-					if !ok {
-						log.Printf("error validating rules: %s rule #%d: network %q not found",
-							direction,
-							i,
-							ruleCfg.Network,
-						)
-						return false
-					}
+				netName, addr, ok := findNetwork(ruleCfg.Network, addrs)
+				if !ok {
+					log.Printf("error validating rules: %s rule #%d: network %q not found",
+						direction,
+						i,
+						ruleCfg.Network,
+					)
+					return false
+				}
 
+				if netName != ruleCfg.Network {
 					// move address to network name the user specified
-					delete(addrs, dockerNetName)
+					delete(addrs, netName)
 					addrs[ruleCfg.Network] = addr
 				}
 			}
@@ -201,26 +199,20 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addr
 						containers[ruleCfg.Container] = container
 					}
 
-					netName := ruleCfg.Network
-					network, ok := container.NetworkSettings.Networks[netName]
+					netName, network, ok := findNetwork(ruleCfg.Network, container.NetworkSettings.Networks)
 					if !ok {
-						// docker compose will prepend "docker_" to network names
-						netName = "docker_" + netName
-						network, ok = container.NetworkSettings.Networks[netName]
-						if !ok {
-							log.Printf("error validating rules: %s rule #%d: network %q not found for container %q",
-								direction,
-								i,
-								ruleCfg.Network,
-								ruleCfg.Container,
-							)
-							return false
-						}
+						log.Printf("error validating rules: %s rule #%d: network %q not found for container %q",
+							direction,
+							i,
+							ruleCfg.Network,
+							ruleCfg.Container,
+						)
+						return false
 					}
 
 					addr, err := netip.ParseAddr(network.IPAddress)
 					if err != nil {
-						log.Printf("error parsing IP of container: %q: %v", ruleCfg.Container, err)
+						log.Printf("error parsing IP of container %q from network %q: %v", ruleCfg.Container, netName, err)
 						return false
 					}
 					rulesCfg[i].IP = addr
@@ -248,6 +240,23 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addr
 	}
 
 	return true
+}
+
+func findNetwork[T any](network string, addrs map[string]T) (string, T, bool) {
+	var zero T
+	netNames := []string{
+		network,
+		"compose_" + network,
+		"docker_" + network,
+	}
+	for _, netName := range netNames {
+		v, ok := addrs[netName]
+		if ok {
+			return netName, v, true
+		}
+	}
+
+	return "", zero, false
 }
 
 func (r *ruleManager) createNFTRules(inbound bool, addr []byte, cfg ruleConfig, contID string) []*nftables.Rule {
@@ -296,10 +305,12 @@ func (r *ruleManager) createNFTRules(inbound bool, addr []byte, cfg ruleConfig, 
 
 func (r *ruleManager) createNFTRule(inbound bool, state uint32, addr []byte, cfg ruleConfig, queueNum uint16, contID string) *nftables.Rule {
 	addrOffset := srcAddrOffset
-	portOffset := dstPortOffset
+	portOffset := srcPortOffset
 	if inbound {
 		addrOffset = dstAddrOffset
-		portOffset = srcPortOffset
+	}
+	if state&stateNew != 0 {
+		portOffset = dstPortOffset
 	}
 	proto := unix.IPPROTO_TCP
 	if cfg.Proto == "udp" {
