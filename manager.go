@@ -55,6 +55,10 @@ func (r *ruleManager) start(ctx context.Context, dbFile string) error {
 		return fmt.Errorf("error creating base rules: %v", err)
 	}
 
+	if err := r.cleanupRules(ctx); err != nil {
+		log.Printf("error cleaning up rules: %v", err)
+	}
+
 	createChannel := make(chan types.ContainerJSON)
 	deleteChannel := make(chan string)
 
@@ -68,9 +72,6 @@ func (r *ruleManager) start(ctx context.Context, dbFile string) error {
 		r.deleteRules(ctx, deleteChannel)
 	}()
 
-	if err := r.cleanupRules(ctx); err != nil {
-		log.Printf("error cleaning up rules: %v", err)
-	}
 	if err := r.syncContainers(ctx, createChannel); err != nil {
 		log.Printf("error syncing containers: %v", err)
 	}
@@ -152,6 +153,7 @@ func (r *ruleManager) init(ctx context.Context, dbFile string) error {
 		return fmt.Errorf("error opening database: %v", err)
 	}
 	if dbNotExist {
+		// create database schema if a sqlite file doesn't exist
 		if _, err := sqlDB.ExecContext(ctx, dbSchema); err != nil {
 			return fmt.Errorf("error creating tables in database: %v", err)
 		}

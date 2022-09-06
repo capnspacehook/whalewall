@@ -33,6 +33,9 @@ func (r *ruleManager) createRules(ctx context.Context, ch <-chan types.Container
 		containerName := strings.Replace(container.Name, "/", "", 1)
 		log.Printf("adding rules for %q", containerName)
 
+		// parse rules config if the rules label exists; if the label
+		// does not exist, no rules will be added but all traffic to
+		// and from the container will still be dropped
 		var rulesCfg config
 		cfg, configExists := container.Config.Labels[rulesLabel]
 		if configExists {
@@ -46,6 +49,7 @@ func (r *ruleManager) createRules(ctx context.Context, ch <-chan types.Container
 			}
 		}
 
+		// ensure specified networks and containers in rules are valid
 		addrs := make(map[string][]byte, len(container.NetworkSettings.Networks))
 		for netName, netSettings := range container.NetworkSettings.Networks {
 			addr, err := netip.ParseAddr(netSettings.IPAddress)
@@ -56,42 +60,43 @@ func (r *ruleManager) createRules(ctx context.Context, ch <-chan types.Container
 			addrs[netName] = ref(addr.As4())[:]
 		}
 
-		if configExists && !r.validateRuleNetworks(ctx, rulesCfg, addrs) {
-			continue
-		}
-
-		nftRules := make([]*nftables.Rule, 0, (len(rulesCfg.Input)+len(rulesCfg.Output))*2)
-
-		// handle outbound rules
-		for _, ruleCfg := range rulesCfg.Output {
-			if ruleCfg.Network != "" {
-				nftRules = append(nftRules,
-					r.createNFTRules(false, addrs[ruleCfg.Network], ruleCfg, container.ID)...,
-				)
-			} else {
-				for _, addr := range addrs {
-					nftRules = append(
-						nftRules, r.createNFTRules(false, addr, ruleCfg, container.ID)...,
-					)
-				}
-			}
-		}
-		// handle inbound rules
-		for _, ruleCfg := range rulesCfg.Input {
-			if ruleCfg.Network != "" {
-				nftRules = append(
-					nftRules, r.createNFTRules(true, addrs[ruleCfg.Network], ruleCfg, container.ID)...,
-				)
-			} else {
-				for _, addr := range addrs {
-					nftRules = append(
-						nftRules, r.createNFTRules(true, addr, ruleCfg, container.ID)...,
-					)
-				}
-			}
-		}
-		// ensure we aren't creating existing rules
 		if configExists {
+			if !r.validateRuleNetworks(ctx, rulesCfg, addrs) {
+				continue
+			}
+
+			nftRules := make([]*nftables.Rule, 0, (len(rulesCfg.Input)+len(rulesCfg.Output))*2)
+
+			// handle outbound rules
+			for _, ruleCfg := range rulesCfg.Output {
+				if ruleCfg.Network != "" {
+					nftRules = append(nftRules,
+						r.createNFTRules(false, addrs[ruleCfg.Network], ruleCfg, container.ID)...,
+					)
+				} else {
+					for _, addr := range addrs {
+						nftRules = append(
+							nftRules, r.createNFTRules(false, addr, ruleCfg, container.ID)...,
+						)
+					}
+				}
+			}
+			// handle inbound rules
+			for _, ruleCfg := range rulesCfg.Input {
+				if ruleCfg.Network != "" {
+					nftRules = append(
+						nftRules, r.createNFTRules(true, addrs[ruleCfg.Network], ruleCfg, container.ID)...,
+					)
+				} else {
+					for _, addr := range addrs {
+						nftRules = append(
+							nftRules, r.createNFTRules(true, addr, ruleCfg, container.ID)...,
+						)
+					}
+				}
+			}
+
+			// ensure we aren't creating existing rules
 			curRules, err := r.nfc.GetRules(r.chain.Table, r.chain)
 			if err != nil {
 				log.Printf("error getting rules of %q: %v", r.chain.Name, err)
@@ -102,10 +107,10 @@ func (r *ruleManager) createRules(ctx context.Context, ch <-chan types.Container
 					nftRules = slices.Delete(nftRules, i, i)
 				}
 			}
-		}
-		// insert rules in reverse order that they were created in to maintain order
-		for i := len(nftRules) - 1; i >= 0; i-- {
-			r.nfc.InsertRule(nftRules[i])
+			// insert rules in reverse order that they were created in to maintain order
+			for i := len(nftRules) - 1; i >= 0; i-- {
+				r.nfc.InsertRule(nftRules[i])
+			}
 		}
 
 		// handle deny all out
@@ -132,6 +137,8 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addr
 	var listedConts []types.Container
 	var err error
 
+	// only get a list of containers if at least one rule specifies a
+	// container
 	inIdx := slices.IndexFunc(cfg.Input, func(r ruleConfig) bool {
 		return r.Container != ""
 	})
