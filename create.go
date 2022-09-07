@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"log"
 	"net/netip"
+	"strconv"
 	"strings"
 
 	"github.com/docker/docker/api/types"
@@ -66,6 +67,74 @@ func (r *ruleManager) createRules(ctx context.Context, ch <-chan types.Container
 			}
 
 			nftRules := make([]*nftables.Rule, 0, (len(rulesCfg.Input)+len(rulesCfg.Output))*2)
+			if rulesCfg.MappedPorts.Allow {
+				//log.Printf("%#v", container.NetworkSettings.Ports)
+
+				hostRules := make(map[uint16][]*nftables.Rule)
+				for netName, netSettings := range container.NetworkSettings.Networks {
+					gateway, err := netip.ParseAddr(netSettings.Gateway)
+					if err != nil {
+						log.Printf("error parsing gateway of network: %v", err)
+						// TODO: return
+					}
+
+					for port, hostPorts := range container.NetworkSettings.Ports {
+						for _, hostPort := range hostPorts {
+							addr, err := netip.ParseAddr(hostPort.HostIP)
+							if err != nil {
+								log.Printf("error parsing IP of port mapping: %v", err)
+								// TODO: return
+							}
+							if addr.Is6() {
+								continue
+							}
+							hostPortInt, err := strconv.ParseUint(hostPort.HostPort, 10, 16)
+							if err != nil {
+								log.Printf("error parsing port of port mapping: %v", err)
+								// TODO: return
+							}
+
+							// create rule to allow traffic from host to
+							// docker; will get NATed to container port
+							ruleCfg := ruleConfig{
+								Proto:          port.Proto(),
+								Port:           uint16(hostPortInt),
+								Chain:          rulesCfg.MappedPorts.Chain,
+								Queue:          rulesCfg.MappedPorts.Queue,
+								InputEstQueue:  rulesCfg.MappedPorts.InputEstQueue,
+								OutputEstQueue: rulesCfg.MappedPorts.OutputEstQueue,
+							}
+							// since these rules won't have a source or
+							// destination IP, ensure they won't be added
+							// multiple times
+							if _, ok := hostRules[uint16(hostPortInt)]; !ok {
+								hostRules[uint16(hostPortInt)] = r.createNFTRules(true, nil, ruleCfg, container.ID)
+							}
+
+							// create rule to allow traffic from container
+							// network gateway to container
+							ruleCfg.IP = addrOrRange{
+								addr: gateway,
+							}
+							ruleCfg.Port = uint16(port.Int())
+							nftRules = append(
+								nftRules, r.createNFTRules(true, addrs[netName], ruleCfg, container.ID)...,
+							)
+
+							// TODO: ??
+							// if !addr.IsUnspecified() {
+							// 	rule.IP = addrOrRange{
+							// 		addr: addr,
+							// 	}
+							// }
+						}
+					}
+				}
+
+				for _, rules := range hostRules {
+					nftRules = append(rules, nftRules...)
+				}
+			}
 
 			// handle inbound rules
 			for _, ruleCfg := range rulesCfg.Input {
@@ -173,8 +242,7 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addr
 				}
 
 				if netName != ruleCfg.Network {
-					// move address to network name the user specified
-					delete(addrs, netName)
+					// add address to network name the user specified
 					addrs[ruleCfg.Network] = addr
 				}
 			}
@@ -410,7 +478,7 @@ func (r *ruleManager) createNFTRule(inbound bool, state uint32, addr []byte, cfg
 			// should never happen if cfg.IP.IsValid is true
 			panic("invalid addrOrRange")
 		}
-	} else {
+	} else if len(addr) != 0 {
 		exprs = append(exprs,
 			// [ payload load 4b @ network header + ... => reg 1 ]
 			&expr.Payload{

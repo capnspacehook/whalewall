@@ -142,6 +142,7 @@ func (r *ruleManager) createBaseRules() error {
 	// create rules that will drop any traffic to or from whalewall
 	// enabled containers, these will be the last rules in the chain
 	// ip saddr @whalewall-ipv4-drop drop
+	// TODO: log prefixes don't get set, probably upstream issue
 	dropSrcRule := &nftables.Rule{
 		Table: filterTable,
 		Chain: r.chain,

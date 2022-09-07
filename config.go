@@ -10,8 +10,30 @@ import (
 )
 
 type config struct {
-	Input  []ruleConfig
-	Output []ruleConfig
+	MappedPorts mappedPorts `yaml:"mapped_ports"`
+	Input       []ruleConfig
+	Output      []ruleConfig
+}
+
+type mappedPorts struct {
+	Allow          bool
+	IP             addrOrRange
+	Chain          string
+	Queue          uint16
+	InputEstQueue  uint16 `yaml:"input_est_queue"`
+	OutputEstQueue uint16 `yaml:"output_est_queue"`
+}
+
+type ruleConfig struct {
+	Network        string
+	IP             addrOrRange
+	Container      string
+	Proto          string
+	Port           uint16
+	Chain          string
+	Queue          uint16
+	InputEstQueue  uint16 `yaml:"input_est_queue"`
+	OutputEstQueue uint16 `yaml:"output_est_queue"`
 }
 
 type addrOrRange struct {
@@ -44,18 +66,6 @@ func (a *addrOrRange) Addr() (netip.Addr, bool) {
 
 func (a *addrOrRange) Range() (netip.Addr, netip.Addr, bool) {
 	return a.addrRange.From(), a.addrRange.To(), a.addrRange.IsValid()
-}
-
-type ruleConfig struct {
-	Network        string
-	IP             addrOrRange
-	Container      string
-	Proto          string
-	Port           uint16
-	Chain          string
-	Queue          uint16
-	InputEstQueue  uint16 `yaml:"input_est_queue"`
-	OutputEstQueue uint16 `yaml:"output_est_queue"`
 }
 
 func validateConfig(c config) error {
