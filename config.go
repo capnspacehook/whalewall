@@ -15,10 +15,10 @@ type config struct {
 	Output      []ruleConfig
 }
 
+// TODO: separate blocks for local/external traffic
 type mappedPorts struct {
-	Allow bool
-	// needed for traffic that enters on forward chain, ie VPN traffic
-	ForwardIP      addrOrRange `yaml:"forward_ip"`
+	Allow          bool
+	IP             addrOrRange
 	Chain          string
 	Queue          uint16
 	InputEstQueue  uint16 `yaml:"input_est_queue"`

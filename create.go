@@ -280,6 +280,8 @@ func findNetwork[T any](network string, addrs map[string]T) (string, T, bool) {
 
 func (r *ruleManager) createPortMappingRules(container types.ContainerJSON, rulesCfg config, addrs map[string][]byte, nftRules []*nftables.Rule) ([]*nftables.Rule, bool) {
 	hostRules := make(map[uint16][]*nftables.Rule)
+	localAddr := netip.MustParseAddr("127.0.0.1")
+
 	for netName, netSettings := range container.NetworkSettings.Networks {
 		gateway, err := netip.ParseAddr(netSettings.Gateway)
 		if err != nil {
@@ -311,40 +313,36 @@ func (r *ruleManager) createPortMappingRules(container types.ContainerJSON, rule
 					return nil, false
 				}
 
-				// create rule to allow traffic from host to docker; will
-				// get NATed to container port
+				// create rule to allow traffic from localhost to docker;
+				// will get NATed to container port
+				ruleCfg.IP = addrOrRange{
+					addr: localAddr,
+				}
 				ruleCfg.Port = uint16(hostPortInt)
-				// since these rules won't have a source or destination
+				// since these rules won't have a destination
 				// IP, ensure they won't be added multiple times
 				if _, ok := hostRules[uint16(hostPortInt)]; !ok {
 					hostRules[uint16(hostPortInt)] = r.createNFTRules(true, nil, ruleCfg, container.ID)
 				}
 			}
 
-			// create rule to allow traffic from container network gateway
-			// to container
-			ruleCfg.IP = addrOrRange{
-				addr: gateway,
-			}
 			ruleCfg.Port = uint16(port.Int())
-			nftRules = append(
-				nftRules, r.createNFTRules(true, addrs[netName], ruleCfg, container.ID)...,
-			)
-
-			if rulesCfg.MappedPorts.ForwardIP.IsValid() {
+			if rulesCfg.MappedPorts.IP.IsValid() {
 				// create rule to allow from forwarded traffic to container
-				ruleCfg.IP = rulesCfg.MappedPorts.ForwardIP
+				ruleCfg.IP = rulesCfg.MappedPorts.IP
 				nftRules = append(
 					nftRules, r.createNFTRules(true, addrs[netName], ruleCfg, container.ID)...,
 				)
 			}
-
-			// TODO: ??
-			// if !addr.IsUnspecified() {
-			// 	rule.IP = addrOrRange{
-			// 		addr: addr,
-			// 	}
-			// }
+			// create rule to allow traffic from container network gateway
+			// to container; this will only be hit for traffic originating
+			// from localhost
+			ruleCfg.IP = addrOrRange{
+				addr: gateway,
+			}
+			nftRules = append(
+				nftRules, r.createNFTRules(true, addrs[netName], ruleCfg, container.ID)...,
+			)
 		}
 	}
 
@@ -418,58 +416,22 @@ func (r *ruleManager) createNFTRule(inbound bool, state uint32, addr []byte, cfg
 	exprs := make([]expr.Any, 0, 15)
 	if cfg.IP.IsValid() {
 		if cfgAddr, ok := cfg.IP.Addr(); ok {
-			srcAddr := addr
-			dstAddr := ref(cfgAddr.As4())[:]
-			if inbound {
-				srcAddr, dstAddr = dstAddr, srcAddr
+			var addrExprs []expr.Any
+			if len(addr) != 0 {
+				addrExprs = matchIPExprs(addr, addrOffset)
 			}
-
-			exprs = append(exprs,
-				// [ payload load 4b @ network header + 12 => reg 1 ]
-				&expr.Payload{
-					OperationType: expr.PayloadLoad,
-					Len:           4,
-					Base:          expr.PayloadBaseNetworkHeader,
-					Offset:        uint32(srcAddrOffset),
-					DestRegister:  1,
-				},
-				// [ cmp eq reg 1 ... ]
-				&expr.Cmp{
-					Op:       expr.CmpOpEq,
-					Register: 1,
-					Data:     srcAddr,
-				},
-				// [ payload load 4b @ network header + 16 => reg 1 ]
-				&expr.Payload{
-					OperationType: expr.PayloadLoad,
-					Len:           4,
-					Base:          expr.PayloadBaseNetworkHeader,
-					Offset:        uint32(dstAddrOffset),
-					DestRegister:  1,
-				},
-				// [ cmp eq reg 1 ... ]
-				&expr.Cmp{
-					Op:       expr.CmpOpEq,
-					Register: 1,
-					Data:     dstAddr,
-				},
-			)
+			cfgAddrExprs := matchIPExprs(ref(cfgAddr.As4())[:], cfgAddrOffset)
+			if inbound {
+				exprs = append(exprs, cfgAddrExprs...)
+				exprs = append(exprs, addrExprs...)
+			} else {
+				exprs = append(exprs, addrExprs...)
+				exprs = append(exprs, cfgAddrExprs...)
+			}
 		} else if lowAddr, highAddr, ok := cfg.IP.Range(); ok {
-			addrExprs := []expr.Any{
-				// [ payload load 4b @ network header + ... => reg 1 ]
-				&expr.Payload{
-					OperationType: expr.PayloadLoad,
-					Len:           4,
-					Base:          expr.PayloadBaseNetworkHeader,
-					Offset:        uint32(addrOffset),
-					DestRegister:  1,
-				},
-				// [ cmp eq reg 1 ... ]
-				&expr.Cmp{
-					Op:       expr.CmpOpEq,
-					Register: 1,
-					Data:     addr[:],
-				},
+			var addrExprs []expr.Any
+			if len(addr) != 0 {
+				addrExprs = matchIPExprs(addr, addrOffset)
 			}
 			rangeExprs := []expr.Any{
 				// [ payload load 4b @ network header + ... => reg 1 ]
@@ -505,22 +467,7 @@ func (r *ruleManager) createNFTRule(inbound bool, state uint32, addr []byte, cfg
 			panic("invalid addrOrRange")
 		}
 	} else if len(addr) != 0 {
-		exprs = append(exprs,
-			// [ payload load 4b @ network header + ... => reg 1 ]
-			&expr.Payload{
-				OperationType: expr.PayloadLoad,
-				Len:           4,
-				Base:          expr.PayloadBaseNetworkHeader,
-				Offset:        uint32(addrOffset),
-				DestRegister:  1,
-			},
-			// [ cmp eq reg 1 ... ]
-			&expr.Cmp{
-				Op:       expr.CmpOpEq,
-				Register: 1,
-				Data:     addr[:],
-			},
-		)
+		exprs = append(exprs, matchIPExprs(addr, addrOffset)...)
 	}
 	if cfg.Proto != "" {
 		exprs = append(exprs,
@@ -603,6 +550,25 @@ func (r *ruleManager) createNFTRule(inbound bool, state uint32, addr []byte, cfg
 		Chain:    r.chain,
 		Exprs:    exprs,
 		UserData: []byte(contID),
+	}
+}
+
+func matchIPExprs(addr []byte, offset int) []expr.Any {
+	return []expr.Any{
+		// [ payload load 4b @ network header + ... => reg 1 ]
+		&expr.Payload{
+			OperationType: expr.PayloadLoad,
+			Len:           4,
+			Base:          expr.PayloadBaseNetworkHeader,
+			Offset:        uint32(offset),
+			DestRegister:  1,
+		},
+		// [ cmp eq reg 1 ... ]
+		&expr.Cmp{
+			Op:       expr.CmpOpEq,
+			Register: 1,
+			Data:     addr,
+		},
 	}
 }
 
