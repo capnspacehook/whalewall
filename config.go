@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net/netip"
+
+	"go4.org/netipx"
 )
 
 type config struct {
@@ -11,9 +14,41 @@ type config struct {
 	Output []ruleConfig
 }
 
+type addrOrRange struct {
+	addr      netip.Addr
+	addrRange netipx.IPRange
+}
+
+func (a *addrOrRange) UnmarshalText(text []byte) error {
+	if bytes.ContainsRune(text, '/') {
+		prefix := new(netip.Prefix)
+		err := prefix.UnmarshalText(text)
+		if err != nil {
+			return err
+		}
+		a.addrRange = netipx.RangeOfPrefix(*prefix)
+		return nil
+	} else if bytes.ContainsRune(text, '-') {
+		return a.addrRange.UnmarshalText(text)
+	}
+	return a.addr.UnmarshalText(text)
+}
+
+func (a *addrOrRange) IsValid() bool {
+	return a.addr.IsValid() || a.addrRange.IsValid()
+}
+
+func (a *addrOrRange) Addr() (netip.Addr, bool) {
+	return a.addr, a.addr.IsValid()
+}
+
+func (a *addrOrRange) Range() (netip.Addr, netip.Addr, bool) {
+	return a.addrRange.From(), a.addrRange.To(), a.addrRange.IsValid()
+}
+
 type ruleConfig struct {
 	Network        string
-	IP             netip.Addr
+	IP             addrOrRange
 	Container      string
 	Proto          string
 	Port           uint16

@@ -215,7 +215,9 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addr
 						log.Printf("error parsing IP of container %q from network %q: %v", ruleCfg.Container, netName, err)
 						return false
 					}
-					rulesCfg[i].IP = addr
+					rulesCfg[i].IP = addrOrRange{
+						addr: addr,
+					}
 				}
 
 				if !found {
@@ -305,9 +307,11 @@ func (r *ruleManager) createNFTRules(inbound bool, addr []byte, cfg ruleConfig, 
 
 func (r *ruleManager) createNFTRule(inbound bool, state uint32, addr []byte, cfg ruleConfig, queueNum uint16, contID string) *nftables.Rule {
 	addrOffset := srcAddrOffset
+	cfgAddrOffset := dstAddrOffset
 	portOffset := srcPortOffset
 	if inbound {
 		addrOffset = dstAddrOffset
+		cfgAddrOffset = srcAddrOffset
 	}
 	if state&stateNew != 0 {
 		portOffset = dstPortOffset
@@ -317,44 +321,95 @@ func (r *ruleManager) createNFTRule(inbound bool, state uint32, addr []byte, cfg
 		proto = unix.IPPROTO_UDP
 	}
 
-	exprs := make([]expr.Any, 0, 13)
+	exprs := make([]expr.Any, 0, 15)
 	if cfg.IP.IsValid() {
-		srcAddr := addr
-		dstAddr := ref(cfg.IP.As4())[:]
-		if inbound {
-			srcAddr, dstAddr = dstAddr, srcAddr
-		}
+		if cfgAddr, ok := cfg.IP.Addr(); ok {
+			srcAddr := addr
+			dstAddr := ref(cfgAddr.As4())[:]
+			if inbound {
+				srcAddr, dstAddr = dstAddr, srcAddr
+			}
 
-		exprs = append(exprs,
-			// [ payload load 4b @ network header + 12 => reg 1 ]
-			&expr.Payload{
-				OperationType: expr.PayloadLoad,
-				Len:           4,
-				Base:          expr.PayloadBaseNetworkHeader,
-				Offset:        uint32(srcAddrOffset),
-				DestRegister:  1,
-			},
-			// [ cmp eq reg 1 ... ]
-			&expr.Cmp{
-				Op:       expr.CmpOpEq,
-				Register: 1,
-				Data:     srcAddr,
-			},
-			// [ payload load 4b @ network header + 16 => reg 1 ]
-			&expr.Payload{
-				OperationType: expr.PayloadLoad,
-				Len:           4,
-				Base:          expr.PayloadBaseNetworkHeader,
-				Offset:        uint32(dstAddrOffset),
-				DestRegister:  1,
-			},
-			// [ cmp eq reg 1 ... ]
-			&expr.Cmp{
-				Op:       expr.CmpOpEq,
-				Register: 1,
-				Data:     dstAddr,
-			},
-		)
+			exprs = append(exprs,
+				// [ payload load 4b @ network header + 12 => reg 1 ]
+				&expr.Payload{
+					OperationType: expr.PayloadLoad,
+					Len:           4,
+					Base:          expr.PayloadBaseNetworkHeader,
+					Offset:        uint32(srcAddrOffset),
+					DestRegister:  1,
+				},
+				// [ cmp eq reg 1 ... ]
+				&expr.Cmp{
+					Op:       expr.CmpOpEq,
+					Register: 1,
+					Data:     srcAddr,
+				},
+				// [ payload load 4b @ network header + 16 => reg 1 ]
+				&expr.Payload{
+					OperationType: expr.PayloadLoad,
+					Len:           4,
+					Base:          expr.PayloadBaseNetworkHeader,
+					Offset:        uint32(dstAddrOffset),
+					DestRegister:  1,
+				},
+				// [ cmp eq reg 1 ... ]
+				&expr.Cmp{
+					Op:       expr.CmpOpEq,
+					Register: 1,
+					Data:     dstAddr,
+				},
+			)
+		} else if lowAddr, highAddr, ok := cfg.IP.Range(); ok {
+			addrExprs := []expr.Any{
+				// [ payload load 4b @ network header + ... => reg 1 ]
+				&expr.Payload{
+					OperationType: expr.PayloadLoad,
+					Len:           4,
+					Base:          expr.PayloadBaseNetworkHeader,
+					Offset:        uint32(addrOffset),
+					DestRegister:  1,
+				},
+				// [ cmp eq reg 1 ... ]
+				&expr.Cmp{
+					Op:       expr.CmpOpEq,
+					Register: 1,
+					Data:     addr[:],
+				},
+			}
+			rangeExprs := []expr.Any{
+				// [ payload load 4b @ network header + ... => reg 1 ]
+				&expr.Payload{
+					OperationType: expr.PayloadLoad,
+					Len:           4,
+					Base:          expr.PayloadBaseNetworkHeader,
+					Offset:        uint32(cfgAddrOffset),
+					DestRegister:  1,
+				},
+				// [ cmp gte reg 1 ... ]
+				&expr.Cmp{
+					Op:       expr.CmpOpGte,
+					Register: 1,
+					Data:     ref(lowAddr.As4())[:],
+				},
+				// [ cmp lte reg 1 ... ]
+				&expr.Cmp{
+					Op:       expr.CmpOpLte,
+					Register: 1,
+					Data:     ref(highAddr.As4())[:],
+				},
+			}
+			if inbound {
+				exprs = append(exprs, rangeExprs...)
+				exprs = append(exprs, addrExprs...)
+			} else {
+				exprs = append(exprs, addrExprs...)
+				exprs = append(exprs, rangeExprs...)
+			}
+		} else {
+			// should never happen if cfg.IP.IsValid is true
+			panic("invalid addrOrRange")
+		}
 	} else {
 		exprs = append(exprs,
 			// [ payload load 4b @ network header + ... => reg 1 ]
