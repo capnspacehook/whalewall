@@ -15,22 +15,32 @@ type config struct {
 	Output      []ruleConfig
 }
 
-// TODO: separate blocks for local/external traffic
 type mappedPorts struct {
-	Allow          bool
-	IP             addrOrRange
-	Chain          string
-	Queue          uint16
-	InputEstQueue  uint16 `yaml:"input_est_queue"`
-	OutputEstQueue uint16 `yaml:"output_est_queue"`
+	Local    localRules
+	External externalRules
+}
+
+type localRules struct {
+	Allow   bool
+	Verdict verdict
+}
+
+type externalRules struct {
+	Allow   bool
+	IP      addrOrRange
+	Verdict verdict
 }
 
 type ruleConfig struct {
-	Network        string
-	IP             addrOrRange
-	Container      string
-	Proto          string
-	Port           uint16
+	Network   string
+	IP        addrOrRange
+	Container string
+	Proto     string
+	Port      uint16
+	Verdict   verdict
+}
+
+type verdict struct {
 	Chain          string
 	Queue          uint16
 	InputEstQueue  uint16 `yaml:"input_est_queue"`
@@ -102,19 +112,24 @@ func validateRule(r ruleConfig) error {
 	if r.Proto != "" && r.Proto != "tcp" && r.Proto != "udp" {
 		return fmt.Errorf("unknown protocol %q", r.Proto)
 	}
-	if r.Chain != "" && r.Queue != 0 {
+
+	return validateVerdict(r.Verdict)
+}
+
+func validateVerdict(v verdict) error {
+	if v.Chain != "" && v.Queue != 0 {
 		return errors.New(`"chain" and "queue" are mutually exclusive`)
 	}
-	if r.Queue == 0 && r.InputEstQueue != 0 {
+	if v.Queue == 0 && v.InputEstQueue != 0 {
 		return errors.New(`"queue" must be set when "input_est_queue" is set`)
 	}
-	if r.Queue == 0 && r.OutputEstQueue != 0 {
+	if v.Queue == 0 && v.OutputEstQueue != 0 {
 		return errors.New(`"queue" must be set when "output_est_queue" is set`)
 	}
-	if r.InputEstQueue == 0 && r.OutputEstQueue != 0 {
+	if v.InputEstQueue == 0 && v.OutputEstQueue != 0 {
 		return errors.New(`"input_est_queue" must be set when "output_est_queue" is set`)
 	}
-	if r.OutputEstQueue == 0 && r.InputEstQueue != 0 {
+	if v.OutputEstQueue == 0 && v.InputEstQueue != 0 {
 		return errors.New(`"output_est_queue" must be set when "input_est_queue" is set`)
 	}
 
