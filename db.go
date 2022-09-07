@@ -1,11 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"log"
-
-	"golang.org/x/exp/slices"
 
 	"github.com/capnspacehook/whalewall/database"
 )
@@ -26,21 +23,7 @@ func (r *ruleManager) addContainer(ctx context.Context, id, name string, addrs m
 		return false
 	}
 
-	// Build a slice of unique IP address bytes, to avoid DB unique
-	// constraint errors. Normally I'd use a map here, but byte slices
-	// aren't comparable.
-	uniqAddrs := make([][]byte, 0, len(addrs))
 	for _, addr := range addrs {
-		uniqAddrs = append(uniqAddrs, addr)
-	}
-	slices.SortFunc(uniqAddrs, func(a, b []byte) bool {
-		return bytes.Compare(a, b) == -1
-	})
-	uniqAddrs = slices.CompactFunc(uniqAddrs, func(a, b []byte) bool {
-		return bytes.Equal(a, b)
-	})
-
-	for _, addr := range uniqAddrs {
 		err := tx.AddContainerAddr(ctx, database.AddContainerAddrParams{
 			Addr:        addr,
 			ContainerID: id,

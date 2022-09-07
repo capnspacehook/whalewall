@@ -16,8 +16,9 @@ type config struct {
 }
 
 type mappedPorts struct {
-	Allow          bool
-	IP             addrOrRange
+	Allow bool
+	// needed for traffic that enters on forward chain, ie VPN traffic
+	ForwardIP      addrOrRange `yaml:"forward_ip"`
 	Chain          string
 	Queue          uint16
 	InputEstQueue  uint16 `yaml:"input_est_queue"`

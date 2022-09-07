@@ -162,6 +162,9 @@ func (r *ruleManager) createBaseRules() error {
 				DestRegister:   0,
 			},
 			&expr.Counter{},
+			&expr.Log{
+				Level: expr.LogLevelInfo,
+			},
 			&expr.Verdict{
 				Kind: expr.VerdictDrop,
 			},
@@ -191,6 +194,9 @@ func (r *ruleManager) createBaseRules() error {
 				DestRegister:   0,
 			},
 			&expr.Counter{},
+			&expr.Log{
+				Level: expr.LogLevelInfo,
+			},
 			&expr.Verdict{
 				Kind: expr.VerdictDrop,
 			},
