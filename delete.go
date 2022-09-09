@@ -43,24 +43,19 @@ func (r *ruleManager) deleteContainerRules(ctx context.Context, id string) {
 		}
 	}
 
-	addrs, err := r.db.GetContainerAddrs(ctx, id)
+	name, err := r.db.GetContainerName(ctx, id)
 	if err != nil {
-		log.Printf("error getting container addrs: %v", err)
+		log.Printf("error getting container name: %v", err)
 		return
 	}
 
-	for _, addr := range addrs {
-		e := []nftables.SetElement{{Key: addr}}
-		if err := r.nfc.SetDeleteElements(r.dropSet, e); err != nil {
-			log.Printf("error marshalling set elements: %v", err)
-			continue
-		}
-		// flush after every element deletion to ensure all possible
-		// elements are deleted
-		err = r.nfc.Flush()
-		if err != nil && !errors.Is(err, syscall.ENOENT) {
-			log.Printf("error deleting set element: %v", err)
-		}
+	r.nfc.DelChain(&nftables.Chain{
+		Table: r.chain.Table,
+		Name:  buildChainName(name, id),
+	})
+	err = r.nfc.Flush()
+	if err != nil && !errors.Is(err, syscall.ENOENT) {
+		log.Printf("error deleting chain: %v", err)
 	}
 
 	r.deleteContainer(ctx, id)
