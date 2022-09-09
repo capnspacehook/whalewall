@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/nftables"
 	"github.com/google/nftables/expr"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -17,6 +18,7 @@ const (
 	outputChainName = "OUTPUT"
 	chainName       = "whalewall"
 	dropSetName     = "whalewall-ipv4-drop"
+	dropRulesPrefix = "WHALEWALL DROP: "
 )
 
 func (r *ruleManager) createBaseRules() error {
@@ -163,7 +165,9 @@ func (r *ruleManager) createBaseRules() error {
 			},
 			&expr.Counter{},
 			&expr.Log{
+				Key:   (1 << unix.NFTA_LOG_PREFIX) | (1 << unix.NFTA_LOG_LEVEL),
 				Level: expr.LogLevelInfo,
+				Data:  []byte(dropRulesPrefix),
 			},
 			&expr.Verdict{
 				Kind: expr.VerdictDrop,
@@ -195,7 +199,9 @@ func (r *ruleManager) createBaseRules() error {
 			},
 			&expr.Counter{},
 			&expr.Log{
+				Key:   (1 << unix.NFTA_LOG_PREFIX) | (1 << unix.NFTA_LOG_LEVEL),
 				Level: expr.LogLevelInfo,
+				Data:  []byte(dropRulesPrefix),
 			},
 			&expr.Verdict{
 				Kind: expr.VerdictDrop,

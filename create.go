@@ -38,8 +38,8 @@ func (r *ruleManager) createRules(ctx context.Context, ch <-chan types.Container
 
 func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJSON) {
 	// container name appears with prefix "/"
-	containerName := strings.Replace(container.Name, "/", "", 1)
-	log.Printf("adding rules for %q", containerName)
+	contName := strings.Replace(container.Name, "/", "", 1)
+	log.Printf("adding rules for %q", contName)
 
 	// parse rules config if the rules label exists; if the label
 	// does not exist, no rules will be added but all traffic to
@@ -62,7 +62,7 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 	for netName, netSettings := range container.NetworkSettings.Networks {
 		addr, err := netip.ParseAddr(netSettings.IPAddress)
 		if err != nil {
-			log.Printf("error parsing IP of container: %q: %v", containerName, err)
+			log.Printf("error parsing IP of container: %q: %v", contName, err)
 			return
 		}
 		addrs[netName] = ref(addr.As4())[:]
@@ -76,7 +76,7 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 		nftRules := make([]*nftables.Rule, 0, (len(rulesCfg.Input)+len(rulesCfg.Output))*2)
 		// handle port mapping rules
 		var ok bool
-		nftRules, ok = r.createPortMappingRules(container, rulesCfg.MappedPorts, addrs, nftRules)
+		nftRules, ok = r.createPortMappingRules(container, contName, rulesCfg.MappedPorts, addrs, nftRules)
 		if !ok {
 			return
 		}
@@ -153,7 +153,7 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 		return
 	}
 
-	r.addContainer(ctx, container.ID, containerName, addrs)
+	r.addContainer(ctx, container.ID, contName, addrs)
 }
 
 func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addrs map[string][]byte) bool {
@@ -278,7 +278,27 @@ func findNetwork[T any](network string, addrs map[string]T) (string, T, bool) {
 	return "", zero, false
 }
 
-func (r *ruleManager) createPortMappingRules(container types.ContainerJSON, mappedPortsCfg mappedPorts, addrs map[string][]byte, nftRules []*nftables.Rule) ([]*nftables.Rule, bool) {
+func (r *ruleManager) createPortMappingRules(container types.ContainerJSON, contName string, mappedPortsCfg mappedPorts, addrs map[string][]byte, nftRules []*nftables.Rule) ([]*nftables.Rule, bool) {
+	// check if there are any mapped ports to create rules for
+	var hasMappedPorts bool
+	for _, hostPorts := range container.NetworkSettings.Ports {
+		// if an image exposes a port but no mapped ports are configured,
+		// the container port it will be here with no host ports
+		if len(hostPorts) != 0 {
+			hasMappedPorts = true
+			break
+		}
+	}
+	if (mappedPortsCfg.Local.Allow || mappedPortsCfg.External.Allow) && !hasMappedPorts {
+		log.Printf("local and/or external access to mapped ports was allowed, but there are not any mapped ports for container %q",
+			contName,
+		)
+		return nftRules, true
+	}
+	if !hasMappedPorts {
+		return nftRules, true
+	}
+
 	hostPortRules := make(map[uint16][]*nftables.Rule)
 
 	for netName, netSettings := range container.NetworkSettings.Networks {
