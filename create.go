@@ -71,20 +71,22 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 		addrs[netName] = ref(addr.As4())[:]
 	}
 
+	// create chain for this container's rules
+	nftRules := make([]*nftables.Rule, 0, (len(rulesCfg.Input)+len(rulesCfg.Output))*2)
+	contChainName := buildChainName(contName, container.ID)
+	chain := &nftables.Chain{
+		Name:  contChainName,
+		Table: r.chain.Table,
+		Type:  nftables.ChainTypeFilter,
+	}
+	r.nfc.AddChain(chain)
+
+	// if no rules were explicitly specified, only the rule that drops
+	// traffic to/from the container will be added
 	if configExists {
 		if !r.validateRuleNetworks(ctx, rulesCfg, addrs) {
 			return
 		}
-
-		nftRules := make([]*nftables.Rule, 0, (len(rulesCfg.Input)+len(rulesCfg.Output))*2)
-
-		contChainName := buildChainName(contName, container.ID)
-		chain := &nftables.Chain{
-			Name:  contChainName,
-			Table: r.chain.Table,
-			Type:  nftables.ChainTypeFilter,
-		}
-		r.nfc.AddChain(chain)
 
 		// handle port mapping rules
 		var ok bool
@@ -131,62 +133,63 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 			}
 		}
 
-		// add container IPs to jump set so traffic to/from this
-		// container will go to the correct chain
-		addrElems := make([]nftables.SetElement, 0, len(addrs))
-		for _, addr := range addrs {
-			addrElems = append(addrElems, nftables.SetElement{
-				Key: addr,
-				VerdictData: &expr.Verdict{
-					Kind:  expr.VerdictJump,
-					Chain: contChainName,
-				},
-			})
-		}
+	}
 
-		if err := r.nfc.SetAddElements(r.containerAddrSet, addrElems); err != nil {
-			log.Printf("error adding elements to set %q: %v", r.containerAddrSet.Name, err)
-			return
-		}
-
-		// create rule to drop all not explicitly allowed traffic
-		logPrefix := strings.ToUpper(contChainName) + " DROP: "
-		nftRules = append(nftRules,
-			&nftables.Rule{
-				Table: chain.Table,
-				Chain: chain,
-				Exprs: []expr.Any{
-					&expr.Counter{},
-					&expr.Log{
-						Key:   (1 << unix.NFTA_LOG_PREFIX) | (1 << unix.NFTA_LOG_LEVEL),
-						Level: expr.LogLevelInfo,
-						Data:  []byte(logPrefix),
-					},
-					&expr.Verdict{
-						Kind: expr.VerdictDrop,
-					},
-				},
-				UserData: []byte(container.ID),
+	// add container IPs to jump set so traffic to/from this
+	// container will go to the correct chain
+	addrElems := make([]nftables.SetElement, 0, len(addrs))
+	for _, addr := range addrs {
+		addrElems = append(addrElems, nftables.SetElement{
+			Key: addr,
+			VerdictData: &expr.Verdict{
+				Kind:  expr.VerdictJump,
+				Chain: contChainName,
 			},
-		)
+		})
+	}
 
-		// ensure we aren't creating existing rules
-		curRules, err := r.nfc.GetRules(r.chain.Table, r.chain)
-		if err != nil {
-			log.Printf("error getting rules of %q: %v", r.chain.Name, err)
-			return
-		}
-		for i := range nftRules {
-			if nftRules[i].Chain.Name == mainChainName {
-				if findRule(nftRules[i], curRules) {
-					nftRules = slices.Delete(nftRules, i, i)
-				}
+	if err := r.nfc.SetAddElements(r.containerAddrSet, addrElems); err != nil {
+		log.Printf("error adding elements to set %q: %v", r.containerAddrSet.Name, err)
+		return
+	}
+
+	// create rule to drop all not explicitly allowed traffic
+	logPrefix := strings.ToUpper(contChainName) + " DROP: "
+	nftRules = append(nftRules,
+		&nftables.Rule{
+			Table: chain.Table,
+			Chain: chain,
+			Exprs: []expr.Any{
+				&expr.Counter{},
+				&expr.Log{
+					Key:   (1 << unix.NFTA_LOG_PREFIX) | (1 << unix.NFTA_LOG_LEVEL),
+					Level: expr.LogLevelInfo,
+					Data:  []byte(logPrefix),
+				},
+				&expr.Verdict{
+					Kind: expr.VerdictDrop,
+				},
+			},
+			UserData: []byte(container.ID),
+		},
+	)
+
+	// ensure we aren't creating existing rules
+	curRules, err := r.nfc.GetRules(r.chain.Table, r.chain)
+	if err != nil {
+		log.Printf("error getting rules of %q: %v", r.chain.Name, err)
+		return
+	}
+	for i := range nftRules {
+		if nftRules[i].Chain.Name == mainChainName {
+			if findRule(nftRules[i], curRules) {
+				nftRules = slices.Delete(nftRules, i, i)
 			}
 		}
-		// insert rules in reverse order that they were created in to maintain order
-		for i := len(nftRules) - 1; i >= 0; i-- {
-			r.nfc.InsertRule(nftRules[i])
-		}
+	}
+	// insert rules in reverse order that they were created in to maintain order
+	for i := len(nftRules) - 1; i >= 0; i-- {
+		r.nfc.InsertRule(nftRules[i])
 	}
 
 	if err := r.nfc.Flush(); err != nil {
@@ -345,7 +348,6 @@ func (r *ruleManager) createPortMappingRules(container types.ContainerJSON, cont
 	}
 
 	hostPortRules := make(map[uint16][]*nftables.Rule)
-
 	for netName, netSettings := range container.NetworkSettings.Networks {
 		gateway, err := netip.ParseAddr(netSettings.Gateway)
 		if err != nil {
