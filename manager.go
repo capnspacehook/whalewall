@@ -23,6 +23,8 @@ import (
 )
 
 const (
+	dbCommands = "PRAGMA busy_timeout = 1000;"
+
 	enabledLabel = "whalewall.enabled"
 	rulesLabel   = "whalewall.rules"
 )
@@ -152,11 +154,14 @@ func (r *ruleManager) init(ctx context.Context, dbFile string) error {
 	if err != nil {
 		return fmt.Errorf("error opening database: %v", err)
 	}
+	// create database schema if a sqlite file doesn't exist
 	if dbNotExist {
-		// create database schema if a sqlite file doesn't exist
 		if _, err := sqlDB.ExecContext(ctx, dbSchema); err != nil {
 			return fmt.Errorf("error creating tables in database: %v", err)
 		}
+	}
+	if _, err := sqlDB.ExecContext(ctx, dbCommands); err != nil {
+		return fmt.Errorf("error executing commands in database: %v", err)
 	}
 	r.db, err = database.NewDB(ctx, sqlDB)
 	if err != nil {
