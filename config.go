@@ -20,6 +20,7 @@ type mappedPorts struct {
 	External externalRules
 }
 
+// TODO: allow users to specify addrOrRange that is within 127.0.0.1/8?
 type localRules struct {
 	Allow   bool
 	Verdict verdict

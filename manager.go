@@ -34,11 +34,11 @@ type ruleManager struct {
 	wg   sync.WaitGroup
 	done chan struct{}
 
-	db        *database.DB
-	dockerCli *client.Client
-	nfc       *nftables.Conn
-	chain     *nftables.Chain
-	dropSet   *nftables.Set
+	db               *database.DB
+	dockerCli        *client.Client
+	nfc              *nftables.Conn
+	chain            *nftables.Chain
+	containerAddrSet *nftables.Set
 }
 
 func newRuleManager() *ruleManager {

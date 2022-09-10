@@ -78,9 +78,9 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 
 		nftRules := make([]*nftables.Rule, 0, (len(rulesCfg.Input)+len(rulesCfg.Output))*2)
 
-		chainName := buildChainName(contName, container.ID)
+		contChainName := buildChainName(contName, container.ID)
 		chain := &nftables.Chain{
-			Name:  chainName,
+			Name:  contChainName,
 			Table: r.chain.Table,
 			Type:  nftables.ChainTypeFilter,
 		}
@@ -104,9 +104,11 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 					r.createNFTRules(true, addr, ruleCfg, true, chain, container.ID)...,
 				)
 			} else {
-				nftRules = append(nftRules,
-					r.createNFTRules(true, nil, ruleCfg, true, chain, container.ID)...,
-				)
+				for _, addr := range addrs {
+					nftRules = append(nftRules,
+						r.createNFTRules(true, addr, ruleCfg, true, chain, container.ID)...,
+					)
+				}
 			}
 		}
 		// handle outbound rules
@@ -121,44 +123,34 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 					r.createNFTRules(false, addr, ruleCfg, true, chain, container.ID)...,
 				)
 			} else {
-				nftRules = append(nftRules,
-					r.createNFTRules(false, nil, ruleCfg, true, chain, container.ID)...,
-				)
+				for _, addr := range addrs {
+					nftRules = append(nftRules,
+						r.createNFTRules(false, addr, ruleCfg, true, chain, container.ID)...,
+					)
+				}
 			}
 		}
 
-		// jump from main whalewall chain to this container's chain on
-		// all IPs the container will have
-		// TODO: use anonymous set to match if container has multiple IPs
+		// add container IPs to jump set so traffic to/from this
+		// container will go to the correct chain
+		addrElems := make([]nftables.SetElement, 0, len(addrs))
 		for _, addr := range addrs {
-			matchSrcIP := matchIPExprs(addr, srcAddrOffset)
-			matchDstIP := matchIPExprs(addr, dstAddrOffset)
-			exprs := []expr.Any{
-				&expr.Counter{},
-				&expr.Verdict{
+			addrElems = append(addrElems, nftables.SetElement{
+				Key: addr,
+				VerdictData: &expr.Verdict{
 					Kind:  expr.VerdictJump,
-					Chain: chainName,
+					Chain: contChainName,
 				},
-			}
+			})
+		}
 
-			nftRules = append(nftRules,
-				&nftables.Rule{
-					Table:    r.chain.Table,
-					Chain:    r.chain,
-					Exprs:    append(matchSrcIP, exprs...),
-					UserData: []byte(container.ID),
-				},
-				&nftables.Rule{
-					Table:    r.chain.Table,
-					Chain:    r.chain,
-					Exprs:    append(matchDstIP, exprs...),
-					UserData: []byte(container.ID),
-				},
-			)
+		if err := r.nfc.SetAddElements(r.containerAddrSet, addrElems); err != nil {
+			log.Printf("error adding elements to set %q: %v", r.containerAddrSet.Name, err)
+			return
 		}
 
 		// create rule to drop all not explicitly allowed traffic
-		logPrefix := strings.ToUpper(chainName) + " DROP: "
+		logPrefix := strings.ToUpper(contChainName) + " DROP: "
 		nftRules = append(nftRules,
 			&nftables.Rule{
 				Table: chain.Table,
@@ -202,7 +194,7 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 		return
 	}
 
-	r.addContainer(ctx, container.ID, contName)
+	r.addContainer(ctx, container.ID, contName, addrs)
 }
 
 func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addrs map[string][]byte) bool {
@@ -363,16 +355,21 @@ func (r *ruleManager) createPortMappingRules(container types.ContainerJSON, cont
 
 		for port, hostPorts := range container.NetworkSettings.Ports {
 			// create rules to allow/drop traffic from localhost to container
-			if mappedPortsCfg.Local.Allow {
-				for _, hostPort := range hostPorts {
-					addr, err := netip.ParseAddr(hostPort.HostIP)
-					if err != nil {
-						log.Printf("error parsing IP of port mapping: %v", err)
-						return nil, false
-					}
-					if addr.Is6() {
-						continue
-					}
+			localAllowed := mappedPortsCfg.Local.Allow
+			for _, hostPort := range hostPorts {
+				addr, err := netip.ParseAddr(hostPort.HostIP)
+				if err != nil {
+					log.Printf("error parsing IP of port mapping: %v", err)
+					return nil, false
+				}
+				// TODO: support IPv6
+				if addr.Is6() {
+					continue
+				}
+
+				if !localAllowed {
+					// create rules to drop traffic from localhost to
+					// mapped port
 					hostPortInt, err := strconv.ParseUint(hostPort.HostPort, 10, 16)
 					if err != nil {
 						log.Printf("error parsing port of port mapping: %v", err)
@@ -390,25 +387,24 @@ func (r *ruleManager) createPortMappingRules(container types.ContainerJSON, cont
 					// since these rules won't have a destination
 					// IP, ensure they won't be added multiple times
 					if _, ok := hostPortRules[uint16(hostPortInt)]; !ok {
-						hostPortRules[uint16(hostPortInt)] = r.createNFTRules(true, nil, ruleCfg, true, r.chain, container.ID)
+						hostPortRules[uint16(hostPortInt)] = r.createNFTRules(true, nil, ruleCfg, false, r.chain, container.ID)
 					}
-
-					// create rules to allow/drop traffic from container
+				} else if !mappedPortsCfg.External.Allow || mappedPortsCfg.External.IP.IsValid() {
+					// Create rules to allow/drop traffic from container
 					// network gateway to container; this will only be hit
 					// for traffic originating from localhost after being
-					// NATed by docker rules
-					if mappedPortsCfg.External.Allow && !mappedPortsCfg.External.IP.IsValid() {
-						// if all external inbound traffic is allowed,
-						// creating this is pointless as the rule to
-						// allow all external inbound traffic will
-						// cover traffic from the gateway too
-						continue
+					// NATed by docker rules.I f all external inbound
+					// traffic is allowed, creating this is pointless as
+					// the rule to allow all external inbound traffic will
+					// cover traffic from the gateway too.
+					ruleCfg := ruleConfig{
+						IP: addrOrRange{
+							addr: gateway,
+						},
+						Proto:   port.Proto(),
+						Port:    uint16(port.Int()),
+						Verdict: mappedPortsCfg.Local.Verdict,
 					}
-
-					ruleCfg.IP = addrOrRange{
-						addr: gateway,
-					}
-					ruleCfg.Port = uint16(port.Int())
 					nftRules = append(nftRules,
 						r.createNFTRules(true, addrs[netName], ruleCfg, true, chain, container.ID)...,
 					)
@@ -425,18 +421,17 @@ func (r *ruleManager) createPortMappingRules(container types.ContainerJSON, cont
 				if mappedPortsCfg.External.IP.IsValid() {
 					ruleCfg.IP = mappedPortsCfg.External.IP
 				}
-				// TODO: add expr: ip != set @container-drop
-				// containers that are not explicitly allowed to access
-				// this port will be dropped
 				nftRules = append(nftRules,
-					r.createNFTRules(true, nil, ruleCfg, true, chain, container.ID)...,
+					r.createNFTRules(true, addrs[netName], ruleCfg, true, chain, container.ID)...,
 				)
 			}
 		}
 	}
 
 	for _, rules := range hostPortRules {
-		nftRules = append(rules, nftRules...)
+		for _, rule := range rules {
+			r.nfc.AddRule(rule)
+		}
 	}
 
 	return nftRules, true
