@@ -42,6 +42,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getContainerAddrsStmt, err = db.PrepareContext(ctx, getContainerAddrs); err != nil {
 		return nil, fmt.Errorf("error preparing query GetContainerAddrs: %w", err)
 	}
+	if q.getContainerIDStmt, err = db.PrepareContext(ctx, getContainerID); err != nil {
+		return nil, fmt.Errorf("error preparing query GetContainerID: %w", err)
+	}
 	if q.getContainerNameStmt, err = db.PrepareContext(ctx, getContainerName); err != nil {
 		return nil, fmt.Errorf("error preparing query GetContainerName: %w", err)
 	}
@@ -81,6 +84,11 @@ func (q *Queries) Close() error {
 	if q.getContainerAddrsStmt != nil {
 		if cerr := q.getContainerAddrsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getContainerAddrsStmt: %w", cerr)
+		}
+	}
+	if q.getContainerIDStmt != nil {
+		if cerr := q.getContainerIDStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getContainerIDStmt: %w", cerr)
 		}
 	}
 	if q.getContainerNameStmt != nil {
@@ -138,6 +146,7 @@ type Queries struct {
 	deleteContainerStmt      *sql.Stmt
 	deleteContainerAddrsStmt *sql.Stmt
 	getContainerAddrsStmt    *sql.Stmt
+	getContainerIDStmt       *sql.Stmt
 	getContainerNameStmt     *sql.Stmt
 	getContainersStmt        *sql.Stmt
 }
@@ -152,6 +161,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		deleteContainerStmt:      q.deleteContainerStmt,
 		deleteContainerAddrsStmt: q.deleteContainerAddrsStmt,
 		getContainerAddrsStmt:    q.getContainerAddrsStmt,
+		getContainerIDStmt:       q.getContainerIDStmt,
 		getContainerNameStmt:     q.getContainerNameStmt,
 		getContainersStmt:        q.getContainersStmt,
 	}

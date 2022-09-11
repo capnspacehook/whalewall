@@ -90,67 +90,20 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 
 		// handle port mapping rules
 		var ok bool
-		nftRules, ok = r.createPortMappingRules(container, contName, rulesCfg.MappedPorts, chain, addrs, nftRules)
+		nftRules, ok = r.createPortMappingRules(container, contName, rulesCfg.MappedPorts, addrs, chain, nftRules)
 		if !ok {
 			return
 		}
 		// handle inbound rules
-		for _, ruleCfg := range rulesCfg.Input {
-			if ruleCfg.Network != "" {
-				_, addr, ok := findNetwork(ruleCfg.Network, addrs)
-				if !ok {
-					log.Printf("network %q not found", ruleCfg.Network)
-					return
-				}
-				nftRules = append(nftRules,
-					r.createNFTRules(true, addr, ruleCfg, true, chain, container.ID)...,
-				)
-			} else {
-				for _, addr := range addrs {
-					nftRules = append(nftRules,
-						r.createNFTRules(true, addr, ruleCfg, true, chain, container.ID)...,
-					)
-				}
-			}
+		nftRules, ok = r.createStandardRules(ctx, true, rulesCfg.Input, addrs, chain, container.ID, nftRules)
+		if !ok {
+			return
 		}
 		// handle outbound rules
-		for _, ruleCfg := range rulesCfg.Output {
-			if ruleCfg.Network != "" {
-				_, addr, ok := findNetwork(ruleCfg.Network, addrs)
-				if !ok {
-					log.Printf("network %q not found", ruleCfg.Network)
-					return
-				}
-				nftRules = append(nftRules,
-					r.createNFTRules(false, addr, ruleCfg, true, chain, container.ID)...,
-				)
-			} else {
-				for _, addr := range addrs {
-					nftRules = append(nftRules,
-						r.createNFTRules(false, addr, ruleCfg, true, chain, container.ID)...,
-					)
-				}
-			}
+		nftRules, ok = r.createStandardRules(ctx, false, rulesCfg.Output, addrs, chain, container.ID, nftRules)
+		if !ok {
+			return
 		}
-
-	}
-
-	// add container IPs to jump set so traffic to/from this
-	// container will go to the correct chain
-	addrElems := make([]nftables.SetElement, 0, len(addrs))
-	for _, addr := range addrs {
-		addrElems = append(addrElems, nftables.SetElement{
-			Key: addr,
-			VerdictData: &expr.Verdict{
-				Kind:  expr.VerdictJump,
-				Chain: contChainName,
-			},
-		})
-	}
-
-	if err := r.nfc.SetAddElements(r.containerAddrSet, addrElems); err != nil {
-		log.Printf("error adding elements to set %q: %v", r.containerAddrSet.Name, err)
-		return
 	}
 
 	// create rule to drop all not explicitly allowed traffic
@@ -190,6 +143,24 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 	// insert rules in reverse order that they were created in to maintain order
 	for i := len(nftRules) - 1; i >= 0; i-- {
 		r.nfc.InsertRule(nftRules[i])
+	}
+
+	// add container IPs to jump set so traffic to/from this
+	// container will go to the correct chain
+	addrElems := make([]nftables.SetElement, 0, len(addrs))
+	for _, addr := range addrs {
+		addrElems = append(addrElems, nftables.SetElement{
+			Key: addr,
+			VerdictData: &expr.Verdict{
+				Kind:  expr.VerdictJump,
+				Chain: contChainName,
+			},
+		})
+	}
+
+	if err := r.nfc.SetAddElements(r.containerAddrSet, addrElems); err != nil {
+		log.Printf("error adding elements to set %q: %v", r.containerAddrSet.Name, err)
+		return
 	}
 
 	if err := r.nfc.Flush(); err != nil {
@@ -326,7 +297,7 @@ func buildChainName(name, id string) string {
 	return fmt.Sprintf("%s%s-%s", chainPrefix, name, id[:12])
 }
 
-func (r *ruleManager) createPortMappingRules(container types.ContainerJSON, contName string, mappedPortsCfg mappedPorts, chain *nftables.Chain, addrs map[string][]byte, nftRules []*nftables.Rule) ([]*nftables.Rule, bool) {
+func (r *ruleManager) createPortMappingRules(container types.ContainerJSON, contName string, mappedPortsCfg mappedPorts, addrs map[string][]byte, chain *nftables.Chain, nftRules []*nftables.Rule) ([]*nftables.Rule, bool) {
 	// check if there are any mapped ports to create rules for
 	var hasMappedPorts bool
 	for _, hostPorts := range container.NetworkSettings.Ports {
@@ -378,18 +349,24 @@ func (r *ruleManager) createPortMappingRules(container types.ContainerJSON, cont
 						return nil, false
 					}
 
-					ruleCfg := ruleConfig{
-						IP: addrOrRange{
-							addr: localAddr,
+					rule := ruleDetails{
+						inbound: true,
+						cfg: ruleConfig{
+							IP: addrOrRange{
+								addr: localAddr,
+							},
+							Proto:   port.Proto(),
+							Port:    uint16(hostPortInt),
+							Verdict: mappedPortsCfg.Local.Verdict,
 						},
-						Proto:   port.Proto(),
-						Port:    uint16(hostPortInt),
-						Verdict: mappedPortsCfg.Local.Verdict,
+						allow:  false,
+						chain:  r.chain,
+						contID: container.ID,
 					}
 					// since these rules won't have a destination
 					// IP, ensure they won't be added multiple times
 					if _, ok := hostPortRules[uint16(hostPortInt)]; !ok {
-						hostPortRules[uint16(hostPortInt)] = r.createNFTRules(true, nil, ruleCfg, false, r.chain, container.ID)
+						hostPortRules[uint16(hostPortInt)] = createNFTRules(rule)
 					}
 				} else if !mappedPortsCfg.External.Allow || mappedPortsCfg.External.IP.IsValid() {
 					// Create rules to allow/drop traffic from container
@@ -399,32 +376,44 @@ func (r *ruleManager) createPortMappingRules(container types.ContainerJSON, cont
 					// traffic is allowed, creating this is pointless as
 					// the rule to allow all external inbound traffic will
 					// cover traffic from the gateway too.
-					ruleCfg := ruleConfig{
-						IP: addrOrRange{
-							addr: gateway,
+					rule := ruleDetails{
+						inbound: true,
+						addr:    addrs[netName],
+						cfg: ruleConfig{
+							IP: addrOrRange{
+								addr: gateway,
+							},
+							Proto:   port.Proto(),
+							Port:    uint16(port.Int()),
+							Verdict: mappedPortsCfg.Local.Verdict,
 						},
-						Proto:   port.Proto(),
-						Port:    uint16(port.Int()),
-						Verdict: mappedPortsCfg.Local.Verdict,
+						allow:  true,
+						chain:  chain,
+						contID: container.ID,
 					}
 					nftRules = append(nftRules,
-						r.createNFTRules(true, addrs[netName], ruleCfg, true, chain, container.ID)...,
+						createNFTRules(rule)...,
 					)
 				}
 			}
 
 			if mappedPortsCfg.External.Allow {
-				ruleCfg := ruleConfig{
-					Proto:   port.Proto(),
-					Port:    uint16(port.Int()),
-					Verdict: mappedPortsCfg.External.Verdict,
-				}
 				// create rules to allow external traffic to container
-				if mappedPortsCfg.External.IP.IsValid() {
-					ruleCfg.IP = mappedPortsCfg.External.IP
+				rule := ruleDetails{
+					inbound: true,
+					addr:    addrs[netName],
+					cfg: ruleConfig{
+						IP:      mappedPortsCfg.External.IP,
+						Proto:   port.Proto(),
+						Port:    uint16(port.Int()),
+						Verdict: mappedPortsCfg.External.Verdict,
+					},
+					allow:  true,
+					chain:  chain,
+					contID: container.ID,
 				}
 				nftRules = append(nftRules,
-					r.createNFTRules(true, addrs[netName], ruleCfg, true, chain, container.ID)...,
+					createNFTRules(rule)...,
 				)
 			}
 		}
@@ -439,57 +428,122 @@ func (r *ruleManager) createPortMappingRules(container types.ContainerJSON, cont
 	return nftRules, true
 }
 
-func (r *ruleManager) createNFTRules(inbound bool, addr []byte, cfg ruleConfig, allow bool, chain *nftables.Chain, contID string) []*nftables.Rule {
+func (r *ruleManager) createStandardRules(ctx context.Context, inbound bool, ruleCfgs []ruleConfig, addrs map[string][]byte, chain *nftables.Chain, condID string, nftRules []*nftables.Rule) ([]*nftables.Rule, bool) {
+	for _, ruleCfg := range ruleCfgs {
+		rule := ruleDetails{
+			inbound: inbound,
+			cfg:     ruleCfg,
+			allow:   true,
+			chain:   chain,
+			contID:  condID,
+		}
+
+		if ruleCfg.Network != "" {
+			_, addr, ok := findNetwork(ruleCfg.Network, addrs)
+			if !ok {
+				log.Printf("network %q not found", ruleCfg.Network)
+				return nil, false
+			}
+			rule.addr = addr
+
+			if ruleCfg.Container != "" {
+				id, err := r.db.GetContainerID(ctx, ruleCfg.Container)
+				if err != nil {
+					log.Printf("error getting container name from database: %v", err)
+					return nil, false
+				}
+				rule.estContID = id
+				rule.estChain = &nftables.Chain{
+					Table: r.chain.Table,
+					Name:  buildChainName(ruleCfg.Container, id),
+				}
+			}
+
+			nftRules = append(nftRules,
+				createNFTRules(rule)...,
+			)
+		} else {
+			for _, addr := range addrs {
+				rule.addr = addr
+				nftRules = append(nftRules,
+					createNFTRules(rule)...,
+				)
+			}
+		}
+	}
+
+	return nftRules, true
+}
+
+type ruleDetails struct {
+	inbound   bool
+	addr      []byte
+	cfg       ruleConfig
+	allow     bool
+	chain     *nftables.Chain
+	estChain  *nftables.Chain
+	contID    string
+	estContID string
+}
+
+func createNFTRules(r ruleDetails) []*nftables.Rule {
 	rules := make([]*nftables.Rule, 0, 3)
-	if cfg.Verdict.Queue == 0 {
-		if allow {
+	if r.estChain == nil {
+		r.estChain = r.chain
+	}
+	if r.estContID == "" {
+		r.estContID = r.contID
+	}
+
+	if r.cfg.Verdict.Queue == 0 {
+		if r.allow {
 			return append(rules,
-				r.createNFTRule(inbound, stateNewEst, addr, cfg, 0, true, chain, contID),
-				r.createNFTRule(!inbound, stateEst, addr, cfg, 0, true, chain, contID),
+				createNFTRule(r.inbound, stateNewEst, r.addr, r.cfg, 0, true, r.chain, r.contID),
+				createNFTRule(!r.inbound, stateEst, r.addr, r.cfg, 0, true, r.estChain, r.estContID),
 			)
 		} else {
 			return append(rules,
-				r.createNFTRule(inbound, stateNew, addr, cfg, 0, false, chain, contID),
+				createNFTRule(r.inbound, stateNew, r.addr, r.cfg, 0, false, r.chain, r.contID),
 			)
 		}
 	}
 
-	if inbound && cfg.Verdict.Queue == cfg.Verdict.InputEstQueue {
+	if r.inbound && r.cfg.Verdict.Queue == r.cfg.Verdict.InputEstQueue {
 		// if rule is inbound and queue and established inbound queue
 		// are the same, create one rule for inbound traffic
 		rules = append(rules,
-			r.createNFTRule(true, stateNewEst, addr, cfg, cfg.Verdict.Queue, allow, chain, contID),
-			r.createNFTRule(false, stateEst, addr, cfg, cfg.Verdict.OutputEstQueue, allow, chain, contID),
+			createNFTRule(true, stateNewEst, r.addr, r.cfg, r.cfg.Verdict.Queue, r.allow, r.chain, r.contID),
+			createNFTRule(false, stateEst, r.addr, r.cfg, r.cfg.Verdict.OutputEstQueue, r.allow, r.estChain, r.estContID),
 		)
-	} else if !inbound && cfg.Verdict.Queue == cfg.Verdict.OutputEstQueue {
+	} else if !r.inbound && r.cfg.Verdict.Queue == r.cfg.Verdict.OutputEstQueue {
 		// if rule is outbound and queue and established outbound queue
 		// are the same, create one rule for outbound traffic
 		rules = append(rules,
-			r.createNFTRule(false, stateNewEst, addr, cfg, cfg.Verdict.Queue, allow, chain, contID),
-			r.createNFTRule(true, stateEst, addr, cfg, cfg.Verdict.InputEstQueue, allow, chain, contID),
+			createNFTRule(false, stateNewEst, r.addr, r.cfg, r.cfg.Verdict.Queue, r.allow, r.chain, r.contID),
+			createNFTRule(true, stateEst, r.addr, r.cfg, r.cfg.Verdict.InputEstQueue, r.allow, r.estChain, r.estContID),
 		)
-	} else if inbound {
+	} else if r.inbound {
 		// if rule is inbound and queue and established inbound queue
 		// are different, need to create separate rules for them
 		rules = append(rules,
-			r.createNFTRule(true, stateNew, addr, cfg, cfg.Verdict.Queue, allow, chain, contID),
-			r.createNFTRule(true, stateEst, addr, cfg, cfg.Verdict.InputEstQueue, allow, chain, contID),
-			r.createNFTRule(false, stateEst, addr, cfg, cfg.Verdict.OutputEstQueue, allow, chain, contID),
+			createNFTRule(true, stateNew, r.addr, r.cfg, r.cfg.Verdict.Queue, r.allow, r.chain, r.contID),
+			createNFTRule(true, stateEst, r.addr, r.cfg, r.cfg.Verdict.InputEstQueue, r.allow, r.chain, r.contID),
+			createNFTRule(false, stateEst, r.addr, r.cfg, r.cfg.Verdict.OutputEstQueue, r.allow, r.estChain, r.estContID),
 		)
-	} else if !inbound {
+	} else if !r.inbound {
 		// if rule is outbound and queue and established outbound queue
 		// are different, need to create separate rules for them
 		rules = append(rules,
-			r.createNFTRule(false, stateNew, addr, cfg, cfg.Verdict.Queue, allow, chain, contID),
-			r.createNFTRule(false, stateEst, addr, cfg, cfg.Verdict.OutputEstQueue, allow, chain, contID),
-			r.createNFTRule(true, stateEst, addr, cfg, cfg.Verdict.InputEstQueue, allow, chain, contID),
+			createNFTRule(false, stateNew, r.addr, r.cfg, r.cfg.Verdict.Queue, r.allow, r.chain, r.contID),
+			createNFTRule(false, stateEst, r.addr, r.cfg, r.cfg.Verdict.OutputEstQueue, r.allow, r.chain, r.contID),
+			createNFTRule(true, stateEst, r.addr, r.cfg, r.cfg.Verdict.InputEstQueue, r.allow, r.estChain, r.estContID),
 		)
 	}
 
 	return rules
 }
 
-func (r *ruleManager) createNFTRule(inbound bool, state uint32, addr []byte, cfg ruleConfig, queueNum uint16, allow bool, chain *nftables.Chain, contID string) *nftables.Rule {
+func createNFTRule(inbound bool, state uint32, addr []byte, cfg ruleConfig, queueNum uint16, allow bool, chain *nftables.Chain, contID string) *nftables.Rule {
 	addrOffset := srcAddrOffset
 	cfgAddrOffset := dstAddrOffset
 	portOffset := srcPortOffset

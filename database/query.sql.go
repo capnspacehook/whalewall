@@ -124,6 +124,22 @@ func (q *Queries) GetContainerAddrs(ctx context.Context, containerID string) ([]
 	return items, nil
 }
 
+const getContainerID = `-- name: GetContainerID :one
+SELECT
+	id
+FROM
+	containers
+WHERE
+	name = ?
+`
+
+func (q *Queries) GetContainerID(ctx context.Context, name string) (string, error) {
+	row := q.queryRow(ctx, q.getContainerIDStmt, getContainerID, name)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getContainerName = `-- name: GetContainerName :one
 SELECT
 	name

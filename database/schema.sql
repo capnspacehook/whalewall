@@ -1,6 +1,6 @@
 CREATE TABLE containers (
   id   TEXT PRIMARY KEY,
-  name TEXT NOT NULL
+  name TEXT UNIQUE NOT NULL
 );
 
 CREATE TABLE addrs (
