@@ -71,7 +71,7 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 	}
 
 	// create chain for this container's rules
-	nftRules := make([]*nftables.Rule, 0, (len(rulesCfg.Input)+len(rulesCfg.Output))*2)
+	nftRules := make([]*nftables.Rule, 0, len(rulesCfg.Output)*2)
 	contChainName := buildChainName(contName, container.ID)
 	chain := &nftables.Chain{
 		Name:  contChainName,
@@ -92,11 +92,6 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 		nftRules, err = r.createPortMappingRules(container, contName, rulesCfg.MappedPorts, addrs, chain, nftRules)
 		if err != nil {
 			return fmt.Errorf("error creating port mapping rules: %v", err)
-		}
-		// handle inbound rules
-		nftRules, err = r.createStandardRules(ctx, true, rulesCfg.Input, addrs, chain, container.ID, nftRules)
-		if err != nil {
-			return fmt.Errorf("error creating input rules: %v", err)
 		}
 		// handle outbound rules
 		nftRules, err = r.createStandardRules(ctx, false, rulesCfg.Output, addrs, chain, container.ID, nftRules)
@@ -175,13 +170,10 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addr
 
 	// only get a list of containers if at least one rule specifies a
 	// container
-	inIdx := slices.IndexFunc(cfg.Input, func(r ruleConfig) bool {
+	i := slices.IndexFunc(cfg.Output, func(r ruleConfig) bool {
 		return r.Container != ""
 	})
-	outIdx := slices.IndexFunc(cfg.Output, func(r ruleConfig) bool {
-		return r.Container != ""
-	})
-	if inIdx != -1 || outIdx != -1 {
+	if i != -1 {
 		listedConts, err = r.dockerCli.ContainerList(ctx, types.ContainerListOptions{})
 		if err != nil {
 			return fmt.Errorf("error listing running containers: %v", err)
@@ -189,88 +181,74 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addr
 	}
 
 	containers := make(map[string]types.ContainerJSON)
-	validateNetworks := func(rulesCfg []ruleConfig, direction string) error {
-		for i, ruleCfg := range rulesCfg {
-			// ensure the specified network exist
-			if ruleCfg.Network != "" {
-				if _, _, ok := findNetwork(ruleCfg.Network, addrs); !ok {
-					return fmt.Errorf("%s rule #%d: network %q not found",
-						direction,
-						i,
-						ruleCfg.Network,
-					)
-				}
-			}
-
-			// ensure the specified container exists and is a member of
-			// the specified network
-			if ruleCfg.Container != "" {
-				var found bool
-				slashName := "/" + ruleCfg.Container
-				for _, listedCont := range listedConts {
-					if !slices.Contains(listedCont.Names, slashName) {
-						continue
-					}
-					found = true
-
-					container, ok := containers[ruleCfg.Container]
-					if !ok {
-						container, err = r.dockerCli.ContainerInspect(ctx, listedCont.ID)
-						if err != nil {
-							return fmt.Errorf("error inspecting container %s: %v", ruleCfg.Container, err)
-						}
-						containers[ruleCfg.Container] = container
-					}
-
-					netName, network, ok := findNetwork(ruleCfg.Network, container.NetworkSettings.Networks)
-					if !ok {
-						return fmt.Errorf("%s rule #%d: network %q not found for container %q",
-							direction,
-							i,
-							ruleCfg.Network,
-							ruleCfg.Container,
-						)
-					}
-
-					addr, err := netip.ParseAddr(network.IPAddress)
-					if err != nil {
-						return fmt.Errorf("error parsing IP of container %q from network %q: %v", ruleCfg.Container, netName, err)
-					}
-					rulesCfg[i].IP = addrOrRange{
-						addr: addr,
-					}
-					break
-				}
-
-				if !found {
-					found, err := r.processRequiredContainers(ctx, slashName, ch)
-					if err != nil {
-						return err
-					}
-					if !found {
-						return fmt.Errorf("%s rule #%d: container %q not found",
-							direction,
-							i,
-							ruleCfg.Container,
-						)
-					}
-
-					listedConts, err = r.dockerCli.ContainerList(ctx, types.ContainerListOptions{})
-					if err != nil {
-						return fmt.Errorf("error listing running containers: %v", err)
-					}
-				}
+	for i, ruleCfg := range cfg.Output {
+		// ensure the specified network exist
+		if ruleCfg.Network != "" {
+			if _, _, ok := findNetwork(ruleCfg.Network, addrs); !ok {
+				return fmt.Errorf("output rule #%d: network %q not found",
+					i,
+					ruleCfg.Network,
+				)
 			}
 		}
 
-		return nil
-	}
+		// ensure the specified container exists and is a member of
+		// the specified network
+		if ruleCfg.Container != "" {
+			var found bool
+			slashName := "/" + ruleCfg.Container
+			for _, listedCont := range listedConts {
+				if !slices.Contains(listedCont.Names, slashName) {
+					continue
+				}
+				found = true
 
-	if err := validateNetworks(cfg.Input, "input"); err != nil {
-		return err
-	}
-	if err := validateNetworks(cfg.Output, "output"); err != nil {
-		return err
+				container, ok := containers[ruleCfg.Container]
+				if !ok {
+					container, err = r.dockerCli.ContainerInspect(ctx, listedCont.ID)
+					if err != nil {
+						return fmt.Errorf("error inspecting container %s: %v", ruleCfg.Container, err)
+					}
+					containers[ruleCfg.Container] = container
+				}
+
+				netName, network, ok := findNetwork(ruleCfg.Network, container.NetworkSettings.Networks)
+				if !ok {
+					return fmt.Errorf("output rule #%d: network %q not found for container %q",
+						i,
+						ruleCfg.Network,
+						ruleCfg.Container,
+					)
+				}
+
+				addr, err := netip.ParseAddr(network.IPAddress)
+				if err != nil {
+					return fmt.Errorf("error parsing IP of container %q from network %q: %v", ruleCfg.Container, netName, err)
+				}
+				cfg.Output[i].IP = addrOrRange{
+					addr: addr,
+				}
+				break
+			}
+
+			if !found {
+				found, err := r.processRequiredContainers(ctx, slashName, ch)
+				if err != nil {
+					return err
+				}
+				if !found {
+					return fmt.Errorf("output rule #%d: container %q not found",
+						i,
+						ruleCfg.Container,
+					)
+				}
+
+				listedConts, err = r.dockerCli.ContainerList(ctx, types.ContainerListOptions{})
+				if err != nil {
+					return fmt.Errorf("error listing running containers: %v", err)
+				}
+			}
+		}
 	}
 
 	return nil

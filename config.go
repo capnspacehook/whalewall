@@ -11,7 +11,6 @@ import (
 
 type config struct {
 	MappedPorts mappedPorts `yaml:"mapped_ports"`
-	Input       []ruleConfig
 	Output      []ruleConfig
 }
 
@@ -81,12 +80,6 @@ func (a *addrOrRange) Range() (netip.Addr, netip.Addr, bool) {
 }
 
 func validateConfig(c config) error {
-	for i, r := range c.Input {
-		err := validateRule(r)
-		if err != nil {
-			return fmt.Errorf("input rule #%d: %w", i, err)
-		}
-	}
 	for i, r := range c.Output {
 		err := validateRule(r)
 		if err != nil {
