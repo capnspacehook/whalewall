@@ -30,6 +30,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.addContainerAddrStmt, err = db.PrepareContext(ctx, addContainerAddr); err != nil {
 		return nil, fmt.Errorf("error preparing query AddContainerAddr: %w", err)
 	}
+	if q.addEstContainerStmt, err = db.PrepareContext(ctx, addEstContainer); err != nil {
+		return nil, fmt.Errorf("error preparing query AddEstContainer: %w", err)
+	}
 	if q.containerExistsStmt, err = db.PrepareContext(ctx, containerExists); err != nil {
 		return nil, fmt.Errorf("error preparing query ContainerExists: %w", err)
 	}
@@ -38,6 +41,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.deleteContainerAddrsStmt, err = db.PrepareContext(ctx, deleteContainerAddrs); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteContainerAddrs: %w", err)
+	}
+	if q.deleteEstContainersStmt, err = db.PrepareContext(ctx, deleteEstContainers); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteEstContainers: %w", err)
 	}
 	if q.getContainerAddrsStmt, err = db.PrepareContext(ctx, getContainerAddrs); err != nil {
 		return nil, fmt.Errorf("error preparing query GetContainerAddrs: %w", err)
@@ -50,6 +56,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getContainersStmt, err = db.PrepareContext(ctx, getContainers); err != nil {
 		return nil, fmt.Errorf("error preparing query GetContainers: %w", err)
+	}
+	if q.getEstContainersStmt, err = db.PrepareContext(ctx, getEstContainers); err != nil {
+		return nil, fmt.Errorf("error preparing query GetEstContainers: %w", err)
 	}
 	return &q, nil
 }
@@ -66,6 +75,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing addContainerAddrStmt: %w", cerr)
 		}
 	}
+	if q.addEstContainerStmt != nil {
+		if cerr := q.addEstContainerStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing addEstContainerStmt: %w", cerr)
+		}
+	}
 	if q.containerExistsStmt != nil {
 		if cerr := q.containerExistsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing containerExistsStmt: %w", cerr)
@@ -79,6 +93,11 @@ func (q *Queries) Close() error {
 	if q.deleteContainerAddrsStmt != nil {
 		if cerr := q.deleteContainerAddrsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing deleteContainerAddrsStmt: %w", cerr)
+		}
+	}
+	if q.deleteEstContainersStmt != nil {
+		if cerr := q.deleteEstContainersStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteEstContainersStmt: %w", cerr)
 		}
 	}
 	if q.getContainerAddrsStmt != nil {
@@ -99,6 +118,11 @@ func (q *Queries) Close() error {
 	if q.getContainersStmt != nil {
 		if cerr := q.getContainersStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getContainersStmt: %w", cerr)
+		}
+	}
+	if q.getEstContainersStmt != nil {
+		if cerr := q.getEstContainersStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getEstContainersStmt: %w", cerr)
 		}
 	}
 	return err
@@ -142,13 +166,16 @@ type Queries struct {
 	tx                       *sql.Tx
 	addContainerStmt         *sql.Stmt
 	addContainerAddrStmt     *sql.Stmt
+	addEstContainerStmt      *sql.Stmt
 	containerExistsStmt      *sql.Stmt
 	deleteContainerStmt      *sql.Stmt
 	deleteContainerAddrsStmt *sql.Stmt
+	deleteEstContainersStmt  *sql.Stmt
 	getContainerAddrsStmt    *sql.Stmt
 	getContainerIDStmt       *sql.Stmt
 	getContainerNameStmt     *sql.Stmt
 	getContainersStmt        *sql.Stmt
+	getEstContainersStmt     *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
@@ -157,12 +184,15 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		tx:                       tx,
 		addContainerStmt:         q.addContainerStmt,
 		addContainerAddrStmt:     q.addContainerAddrStmt,
+		addEstContainerStmt:      q.addEstContainerStmt,
 		containerExistsStmt:      q.containerExistsStmt,
 		deleteContainerStmt:      q.deleteContainerStmt,
 		deleteContainerAddrsStmt: q.deleteContainerAddrsStmt,
+		deleteEstContainersStmt:  q.deleteEstContainersStmt,
 		getContainerAddrsStmt:    q.getContainerAddrsStmt,
 		getContainerIDStmt:       q.getContainerIDStmt,
 		getContainerNameStmt:     q.getContainerNameStmt,
 		getContainersStmt:        q.getContainersStmt,
+		getEstContainersStmt:     q.getEstContainersStmt,
 	}
 }

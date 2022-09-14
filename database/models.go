@@ -15,3 +15,8 @@ type Container struct {
 	ID   string
 	Name string
 }
+
+type EstContainer struct {
+	SrcContainerID string
+	DstContainerID string
+}

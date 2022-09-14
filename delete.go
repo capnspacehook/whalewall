@@ -31,18 +31,7 @@ func (r *ruleManager) deleteContainerRules(ctx context.Context, id, name string)
 		return
 	}
 
-	idb := []byte(id)
-	for _, rule := range rules {
-		if bytes.Equal(idb, rule.UserData) {
-			r.nfc.DelRule(rule)
-			// flush after every rule deletion to ensure all possible
-			// rules are deleted
-			err = r.nfc.Flush()
-			if err != nil && !errors.Is(err, syscall.ENOENT) {
-				logger.Error("error deleting rule", zap.Error(err))
-			}
-		}
-	}
+	r.deleteRulesOfChain(logger, rules, id)
 
 	addrs, err := r.db.GetContainerAddrs(ctx, id)
 	if err != nil {
@@ -64,6 +53,26 @@ func (r *ruleManager) deleteContainerRules(ctx context.Context, id, name string)
 		}
 	}
 
+	estContainers, err := r.db.GetEstContainers(ctx, id)
+	if err != nil {
+		logger.Error("error getting established containers", zap.Error(err))
+		return
+	}
+
+	// delete rules in other container's chains
+	for _, estCont := range estContainers {
+		chain := &nftables.Chain{
+			Table: r.chain.Table,
+			Name:  buildChainName(estCont.Name, estCont.DstContainerID),
+		}
+		rules, err := r.nfc.GetRules(chain.Table, chain)
+		if err != nil {
+			logger.Error("error getting rules of chain", zap.String("chain.name", chain.Name), zap.Error(err))
+			continue
+		}
+		r.deleteRulesOfChain(logger, rules, id)
+	}
+
 	chainName := buildChainName(name, id)
 	r.nfc.DelChain(&nftables.Chain{
 		Table: r.chain.Table,
@@ -76,5 +85,22 @@ func (r *ruleManager) deleteContainerRules(ctx context.Context, id, name string)
 
 	if err := r.deleteContainer(ctx, logger, id); err != nil {
 		logger.Error("error deleting container from database", zap.Error(err))
+	}
+}
+
+func (r *ruleManager) deleteRulesOfChain(logger *zap.Logger, rules []*nftables.Rule, id string) {
+	idb := []byte(id)
+	for _, rule := range rules {
+		if !bytes.Equal(idb, rule.UserData) {
+			continue
+		}
+
+		r.nfc.DelRule(rule)
+		// flush after every rule deletion to ensure all possible
+		// rules are deleted
+		err := r.nfc.Flush()
+		if err != nil && !errors.Is(err, syscall.ENOENT) {
+			logger.Error("error deleting rule", zap.Error(err))
+		}
 	}
 }

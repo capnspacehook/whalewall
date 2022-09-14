@@ -49,6 +49,26 @@ func (q *Queries) AddContainerAddr(ctx context.Context, arg AddContainerAddrPara
 	return err
 }
 
+const addEstContainer = `-- name: AddEstContainer :exec
+INSERT INTO
+	est_containers(src_container_id, dst_container_id)
+VALUES
+	(
+		?,
+		?
+	)
+`
+
+type AddEstContainerParams struct {
+	SrcContainerID string
+	DstContainerID string
+}
+
+func (q *Queries) AddEstContainer(ctx context.Context, arg AddEstContainerParams) error {
+	_, err := q.exec(ctx, q.addEstContainerStmt, addEstContainer, arg.SrcContainerID, arg.DstContainerID)
+	return err
+}
+
 const containerExists = `-- name: ContainerExists :one
 SELECT
 	EXISTS (
@@ -89,6 +109,18 @@ WHERE
 
 func (q *Queries) DeleteContainerAddrs(ctx context.Context, containerID string) error {
 	_, err := q.exec(ctx, q.deleteContainerAddrsStmt, deleteContainerAddrs, containerID)
+	return err
+}
+
+const deleteEstContainers = `-- name: DeleteEstContainers :exec
+DELETE FROM
+	est_containers
+WHERE
+	src_container_id = ?
+`
+
+func (q *Queries) DeleteEstContainers(ctx context.Context, srcContainerID string) error {
+	_, err := q.exec(ctx, q.deleteEstContainersStmt, deleteEstContainers, srcContainerID)
 	return err
 }
 
@@ -174,6 +206,48 @@ func (q *Queries) GetContainers(ctx context.Context) ([]Container, error) {
 	for rows.Next() {
 		var i Container
 		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getEstContainers = `-- name: GetEstContainers :many
+SELECT
+	e.dst_container_id,
+	c.name
+FROM
+	est_containers e
+JOIN
+	containers c
+ON
+	c.id = e.dst_container_id
+WHERE
+	e.src_container_id = ?
+`
+
+type GetEstContainersRow struct {
+	DstContainerID string
+	Name           string
+}
+
+func (q *Queries) GetEstContainers(ctx context.Context, srcContainerID string) ([]GetEstContainersRow, error) {
+	rows, err := q.query(ctx, q.getEstContainersStmt, getEstContainers, srcContainerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetEstContainersRow
+	for rows.Next() {
+		var i GetEstContainersRow
+		if err := rows.Scan(&i.DstContainerID, &i.Name); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

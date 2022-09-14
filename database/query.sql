@@ -16,6 +16,15 @@ VALUES
 		?
 	);
 
+-- name: AddEstContainer :exec
+INSERT INTO
+	est_containers(src_container_id, dst_container_id)
+VALUES
+	(
+		?,
+		?
+	);
+
 -- name: ContainerExists :one
 SELECT
 	EXISTS (
@@ -38,6 +47,12 @@ DELETE FROM
 	addrs
 WHERE
 	container_id = ?;
+
+-- name: DeleteEstContainers :exec
+DELETE FROM
+	est_containers
+WHERE
+	src_container_id = ?;
 
 -- name: GetContainerAddrs :many
 SELECT 
@@ -69,3 +84,16 @@ SELECT
 	name
 FROM
 	containers;
+
+-- name: GetEstContainers :many
+SELECT
+	e.dst_container_id,
+	c.name
+FROM
+	est_containers e
+JOIN
+	containers c
+ON
+	c.id = e.dst_container_id
+WHERE
+	e.src_container_id = ?;
