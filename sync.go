@@ -7,8 +7,11 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 	"gopkg.in/yaml.v3"
 )
+
+const composeDependsLabel = "com.docker.compose.depends_on"
 
 func (r *ruleManager) syncContainers(ctx context.Context) error {
 	filter := filters.NewArgs(filters.KeyValuePair{
@@ -19,6 +22,11 @@ func (r *ruleManager) syncContainers(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("error listing containers: %w", err)
 	}
+	// sort containers so those that don't have dependencies go first
+	slices.SortFunc(containers, func(a, b types.Container) bool {
+		_, ok := a.Labels[composeDependsLabel]
+		return ok
+	})
 
 	for _, c := range containers {
 		e, err := r.db.ContainerExists(ctx, c.ID)
