@@ -360,7 +360,7 @@ func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types
 		}
 	}
 	if (mappedPortsCfg.Local.Allow || mappedPortsCfg.External.Allow) && !hasMappedPorts {
-		logger.Warn("local and/or external access to mapped ports was allowed, but there are not any mapped ports")
+		logger.Warn("local and/or external access to mapped ports is allowed, but there are not any mapped ports")
 		return nftRules, nil
 	}
 	if !hasMappedPorts {
@@ -375,7 +375,6 @@ func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types
 		}
 
 		for port, hostPorts := range container.NetworkSettings.Ports {
-			// create rules to allow/drop traffic from localhost to container
 			localAllowed := mappedPortsCfg.Local.Allow
 			for _, hostPort := range hostPorts {
 				addr, err := netip.ParseAddr(hostPort.HostIP)
@@ -384,6 +383,22 @@ func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types
 				}
 				// TODO: support IPv6
 				if addr.Is6() {
+					continue
+				}
+
+				// TODO: make same checks for external
+				if !addr.IsUnspecified() && addr != localAddr && localAllowed {
+					logger.Sugar().Warnf("local access to mapped ports is allowed, but port %s is listening on %s which is not accessible to localhost",
+						hostPort.HostPort,
+						addr,
+					)
+					continue
+				}
+				if !addr.IsUnspecified() && addr != localAddr && !localAllowed {
+					// local access is not allowed, but localhost won't
+					// be able to reach this port anyway since it isn't
+					// listening on 0.0.0.0 or 127.0.0.1, so no need to
+					// create any drop rules
 					continue
 				}
 
@@ -418,7 +433,7 @@ func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types
 					// Create rules to allow/drop traffic from container
 					// network gateway to container; this will only be hit
 					// for traffic originating from localhost after being
-					// NATed by docker rules.I f all external inbound
+					// NATed by docker rules. If all external inbound
 					// traffic is allowed, creating this is pointless as
 					// the rule to allow all external inbound traffic will
 					// cover traffic from the gateway too.
