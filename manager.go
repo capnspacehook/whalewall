@@ -36,9 +36,13 @@ type ruleManager struct {
 	wg   sync.WaitGroup
 	done chan struct{}
 
-	db               *database.DB
-	dockerCli        *client.Client
-	nfc              *nftables.Conn
+	createCh chan types.ContainerJSON
+	deleteCh chan string
+
+	db        *database.DB
+	dockerCli *client.Client
+	nfc       *nftables.Conn
+
 	chain            *nftables.Chain
 	containerAddrSet *nftables.Set
 }
@@ -61,20 +65,20 @@ func (r *ruleManager) start(ctx context.Context, dbFile string) error {
 		log.Printf("error cleaning up rules: %v", err)
 	}
 
-	createChannel := make(chan types.ContainerJSON)
-	deleteChannel := make(chan string)
+	r.createCh = make(chan types.ContainerJSON)
+	r.deleteCh = make(chan string)
 
 	r.wg.Add(2)
 	go func() {
 		defer r.wg.Done()
-		r.createRules(ctx, createChannel)
+		r.createRules(ctx)
 	}()
 	go func() {
 		defer r.wg.Done()
-		r.deleteRules(ctx, deleteChannel)
+		r.deleteRules(ctx)
 	}()
 
-	if err := r.syncContainers(ctx, createChannel); err != nil {
+	if err := r.syncContainers(ctx); err != nil {
 		log.Printf("error syncing containers: %v", err)
 	}
 
@@ -102,10 +106,10 @@ func (r *ruleManager) start(ctx context.Context, dbFile string) error {
 							log.Printf("error inspecting container: %v", err)
 							continue
 						}
-						createChannel <- container
+						r.createCh <- container
 					}
 					if msg.Action == "kill" {
-						deleteChannel <- msg.ID
+						r.deleteCh <- msg.ID
 					}
 				}
 			case err := <-streamErrs:
@@ -125,8 +129,8 @@ func (r *ruleManager) start(ctx context.Context, dbFile string) error {
 				}
 				messages, streamErrs = addFilters(ctx, r.dockerCli)
 			case <-r.done:
-				close(createChannel)
-				close(deleteChannel)
+				close(r.createCh)
+				close(r.deleteCh)
 				return
 			}
 		}

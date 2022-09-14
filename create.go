@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"log"
 	"net/netip"
@@ -35,13 +37,13 @@ const (
 
 var localAddr = netip.MustParseAddr("127.0.0.1")
 
-func (r *ruleManager) createRules(ctx context.Context, ch <-chan types.ContainerJSON) {
-	for container := range ch {
-		r.createRule(ctx, container, ch)
+func (r *ruleManager) createRules(ctx context.Context) {
+	for container := range r.createCh {
+		r.createRule(ctx, container)
 	}
 }
 
-func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJSON, ch <-chan types.ContainerJSON) error {
+func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJSON) error {
 	// container name appears with prefix "/"
 	contName := strings.Replace(container.Name, "/", "", 1)
 	log.Printf("adding rules for %q", contName)
@@ -83,7 +85,7 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 	// if no rules were explicitly specified, only the rule that drops
 	// traffic to/from the container will be added
 	if configExists {
-		if err := r.validateRuleNetworks(ctx, rulesCfg, addrs, ch); err != nil {
+		if err := r.validateRuleNetworks(ctx, rulesCfg, addrs); err != nil {
 			return fmt.Errorf("error validating rules: %v", err)
 		}
 
@@ -164,7 +166,7 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 	return r.addContainer(ctx, container.ID, contName, addrs)
 }
 
-func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addrs map[string][]byte, ch <-chan types.ContainerJSON) error {
+func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addrs map[string][]byte) error {
 	var listedConts []types.Container
 	var err error
 
@@ -232,9 +234,9 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addr
 			}
 
 			if !found {
-				found, err := r.processRequiredContainers(ctx, slashName, ch)
+				found, err := r.processRequiredContainers(ctx, slashName)
 				if err != nil {
-					return err
+					return fmt.Errorf("error handling required container %q: %v", ruleCfg.Container, err)
 				}
 				if !found {
 					return fmt.Errorf("output rule #%d: container %q not found",
@@ -271,18 +273,18 @@ func findNetwork[T any](network string, addrs map[string]T) (string, T, bool) {
 	return "", zero, false
 }
 
-func (r *ruleManager) processRequiredContainers(ctx context.Context, name string, ch <-chan types.ContainerJSON) (bool, error) {
+func (r *ruleManager) processRequiredContainers(ctx context.Context, name string) (bool, error) {
 	found := false
 	timer := time.NewTimer(containerStartTimeout)
 
 	for !found {
 		select {
-		case c := <-ch:
+		case c := <-r.createCh:
 			if !timer.Stop() {
 				<-timer.C
 			}
 
-			if err := r.createRule(ctx, c, ch); err != nil {
+			if err := r.createRule(ctx, c); err != nil {
 				return false, err
 			}
 
@@ -450,10 +452,20 @@ func (r *ruleManager) createStandardRules(ctx context.Context, inbound bool, rul
 			rule.addr = addr
 
 			if ruleCfg.Container != "" {
-				// TODO: process other containers it not found
 				id, err := r.db.GetContainerID(ctx, ruleCfg.Container)
+				if err != nil && errors.Is(err, sql.ErrNoRows) {
+					var found bool
+					found, err = r.processRequiredContainers(ctx, "/"+ruleCfg.Container)
+					if err != nil {
+						return nil, fmt.Errorf("error handling required container %q: %v", ruleCfg.Container, err)
+					}
+					if !found {
+						return nil, fmt.Errorf("container %q not found", ruleCfg.Container)
+					}
+					id, err = r.db.GetContainerID(ctx, ruleCfg.Container)
+				}
 				if err != nil {
-					return nil, fmt.Errorf("error getting container ID from database: %v", err)
+					return nil, fmt.Errorf("error getting container %q ID from database: %v", ruleCfg.Container, err)
 				}
 				rule.estContID = id
 				rule.estChain = &nftables.Chain{

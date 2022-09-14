@@ -10,7 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func (r *ruleManager) syncContainers(ctx context.Context, createChannel chan types.ContainerJSON) error {
+func (r *ruleManager) syncContainers(ctx context.Context) error {
 	filter := filters.NewArgs(filters.KeyValuePair{
 		Key:   "label",
 		Value: enabledLabel,
@@ -50,7 +50,7 @@ func (r *ruleManager) syncContainers(ctx context.Context, createChannel chan typ
 				continue
 			}
 			if enabled {
-				createChannel <- container
+				r.createCh <- container
 			}
 		}
 	}

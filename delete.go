@@ -10,8 +10,8 @@ import (
 	"github.com/google/nftables"
 )
 
-func (r *ruleManager) deleteRules(ctx context.Context, containerID <-chan string) {
-	for id := range containerID {
+func (r *ruleManager) deleteRules(ctx context.Context) {
+	for id := range r.deleteCh {
 		name, err := r.db.GetContainerName(ctx, id)
 		if err != nil {
 			log.Printf("error getting name of container %s: %v", id, err)
