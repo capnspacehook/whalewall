@@ -2,25 +2,24 @@ package main
 
 import (
 	"context"
-	"log"
+	"fmt"
 
 	"github.com/capnspacehook/whalewall/database"
 )
 
-func (r *ruleManager) addContainer(ctx context.Context, id, name string, addrs map[string][]byte) bool {
-	tx, ok := r.db.Begin(ctx)
-	if !ok {
-		return false
+func (r *ruleManager) addContainer(ctx context.Context, id, name string, addrs map[string][]byte) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
 	}
 	defer tx.Rollback(ctx)
 
-	err := tx.AddContainer(ctx, database.AddContainerParams{
+	err = tx.AddContainer(ctx, database.AddContainerParams{
 		ID:   id,
 		Name: name,
 	})
 	if err != nil {
-		log.Printf("error adding container to database: %v", err)
-		return false
+		return fmt.Errorf("error adding container to database: %v", err)
 	}
 
 	for _, addr := range addrs {
@@ -29,28 +28,25 @@ func (r *ruleManager) addContainer(ctx context.Context, id, name string, addrs m
 			ContainerID: id,
 		})
 		if err != nil {
-			log.Printf("error adding container addr to database: %v", err)
-			return false
+			return fmt.Errorf("error adding container addr to database: %v", err)
 		}
 	}
 
 	return tx.Commit(ctx)
 }
 
-func (r *ruleManager) deleteContainer(ctx context.Context, id string) bool {
-	tx, ok := r.db.Begin(ctx)
-	if !ok {
-		return false
+func (r *ruleManager) deleteContainer(ctx context.Context, id string) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
 	}
 	defer tx.Rollback(ctx)
 
 	if err := tx.DeleteContainerAddrs(ctx, id); err != nil {
-		log.Printf("error deleting container addrs from database: %v", err)
-		return false
+		return fmt.Errorf("error deleting container addrs from database: %v", err)
 	}
 	if err := tx.DeleteContainer(ctx, id); err != nil {
-		log.Printf("error deleting container from database: %v", err)
-		return false
+		return fmt.Errorf("error deleting container from database: %v", err)
 	}
 
 	return tx.Commit(ctx)

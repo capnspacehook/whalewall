@@ -87,10 +87,6 @@ func (r *ruleManager) start(ctx context.Context, dbFile string) error {
 			select {
 			case msg := <-messages:
 				if e, ok := msg.Actor.Attributes[enabledLabel]; ok {
-					if msg.Action != "start" && msg.Action != "kill" {
-						continue
-					}
-
 					var enabled bool
 					if err := yaml.Unmarshal([]byte(e), &enabled); err != nil {
 						log.Printf("error parsing %q label: %v", enabledLabel, err)

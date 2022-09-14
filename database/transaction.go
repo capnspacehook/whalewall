@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log"
 )
 
@@ -28,16 +29,15 @@ type TX struct {
 	*Queries
 }
 
-func (d *DB) Begin(ctx context.Context) (*TX, bool) {
+func (d *DB) Begin(ctx context.Context) (*TX, error) {
 	tx, err := d.db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
-		log.Printf("error beginning database transaction: %v", err)
-		return nil, false
+		return nil, fmt.Errorf("error beginning database transaction: %v", err)
 	}
 
 	return &TX{
 		Queries: d.WithTx(tx),
-	}, true
+	}, nil
 }
 
 func (t *TX) Rollback(ctx context.Context) bool {
@@ -52,11 +52,10 @@ func (t *TX) Rollback(ctx context.Context) bool {
 	return true
 }
 
-func (t *TX) Commit(ctx context.Context) bool {
+func (t *TX) Commit(ctx context.Context) error {
 	if err := t.tx.Commit(); err != nil {
-		log.Printf("error committing database transaction: %v", err)
-		return false
+		return fmt.Errorf("error committing database transaction: %v", err)
 	}
 
-	return true
+	return nil
 }

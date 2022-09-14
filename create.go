@@ -41,7 +41,7 @@ func (r *ruleManager) createRules(ctx context.Context, ch <-chan types.Container
 	}
 }
 
-func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJSON, ch <-chan types.ContainerJSON) bool {
+func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJSON, ch <-chan types.ContainerJSON) error {
 	// container name appears with prefix "/"
 	contName := strings.Replace(container.Name, "/", "", 1)
 	log.Printf("adding rules for %q", contName)
@@ -53,12 +53,10 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 	cfg, configExists := container.Config.Labels[rulesLabel]
 	if configExists {
 		if err := yaml.Unmarshal([]byte(cfg), &rulesCfg); err != nil {
-			log.Printf("error parsing rules: %v", err)
-			return false
+			return fmt.Errorf("error parsing rules: %v", err)
 		}
 		if err := validateConfig(rulesCfg); err != nil {
-			log.Printf("error validating rules: %v", err)
-			return false
+			return fmt.Errorf("error validating rules: %v", err)
 		}
 	}
 
@@ -67,8 +65,7 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 	for netName, netSettings := range container.NetworkSettings.Networks {
 		addr, err := netip.ParseAddr(netSettings.IPAddress)
 		if err != nil {
-			log.Printf("error parsing IP of container: %q: %v", contName, err)
-			return false
+			return fmt.Errorf("error parsing IP of container: %q: %v", contName, err)
 		}
 		addrs[netName] = ref(addr.As4())[:]
 	}
@@ -86,25 +83,25 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 	// if no rules were explicitly specified, only the rule that drops
 	// traffic to/from the container will be added
 	if configExists {
-		if !r.validateRuleNetworks(ctx, rulesCfg, addrs, ch) {
-			return false
+		if err := r.validateRuleNetworks(ctx, rulesCfg, addrs, ch); err != nil {
+			return fmt.Errorf("error validating rules: %v", err)
 		}
 
 		// handle port mapping rules
-		var ok bool
-		nftRules, ok = r.createPortMappingRules(container, contName, rulesCfg.MappedPorts, addrs, chain, nftRules)
-		if !ok {
-			return false
+		var err error
+		nftRules, err = r.createPortMappingRules(container, contName, rulesCfg.MappedPorts, addrs, chain, nftRules)
+		if err != nil {
+			return fmt.Errorf("error creating port mapping rules: %v", err)
 		}
 		// handle inbound rules
-		nftRules, ok = r.createStandardRules(ctx, true, rulesCfg.Input, addrs, chain, container.ID, nftRules)
-		if !ok {
-			return false
+		nftRules, err = r.createStandardRules(ctx, true, rulesCfg.Input, addrs, chain, container.ID, nftRules)
+		if err != nil {
+			return fmt.Errorf("error creating input rules: %v", err)
 		}
 		// handle outbound rules
-		nftRules, ok = r.createStandardRules(ctx, false, rulesCfg.Output, addrs, chain, container.ID, nftRules)
-		if !ok {
-			return false
+		nftRules, err = r.createStandardRules(ctx, false, rulesCfg.Output, addrs, chain, container.ID, nftRules)
+		if err != nil {
+			return fmt.Errorf("error creating output rules: %v", err)
 		}
 	}
 
@@ -132,8 +129,7 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 	// ensure we aren't creating existing rules
 	curRules, err := r.nfc.GetRules(r.chain.Table, r.chain)
 	if err != nil {
-		log.Printf("error getting rules of %q: %v", r.chain.Name, err)
-		return false
+		return fmt.Errorf("error getting rules of %q: %v", r.chain.Name, err)
 	}
 	for i := range nftRules {
 		if nftRules[i].Chain.Name == mainChainName {
@@ -161,22 +157,19 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 	}
 
 	if err := r.nfc.SetAddElements(r.containerAddrSet, addrElems); err != nil {
-		log.Printf("error adding elements to set %q: %v", r.containerAddrSet.Name, err)
-		return false
+		return fmt.Errorf("error adding elements to set %q: %v", r.containerAddrSet.Name, err)
 	}
 
 	if err := r.nfc.Flush(); err != nil {
-		log.Printf("error flushing nftables commands: %v", err)
-		return false
+		return fmt.Errorf("error flushing nftables commands: %v", err)
 	}
 
 	log.Printf("adding %q to database", contName)
-	r.addContainer(ctx, container.ID, contName, addrs)
 
-	return true
+	return r.addContainer(ctx, container.ID, contName, addrs)
 }
 
-func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addrs map[string][]byte, ch <-chan types.ContainerJSON) bool {
+func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addrs map[string][]byte, ch <-chan types.ContainerJSON) error {
 	var listedConts []types.Container
 	var err error
 
@@ -191,23 +184,21 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addr
 	if inIdx != -1 || outIdx != -1 {
 		listedConts, err = r.dockerCli.ContainerList(ctx, types.ContainerListOptions{})
 		if err != nil {
-			log.Printf("error listing running containers: %v", err)
-			return false
+			return fmt.Errorf("error listing running containers: %v", err)
 		}
 	}
 
 	containers := make(map[string]types.ContainerJSON)
-	validateNetworks := func(rulesCfg []ruleConfig, direction string) bool {
+	validateNetworks := func(rulesCfg []ruleConfig, direction string) error {
 		for i, ruleCfg := range rulesCfg {
 			// ensure the specified network exist
 			if ruleCfg.Network != "" {
 				if _, _, ok := findNetwork(ruleCfg.Network, addrs); !ok {
-					log.Printf("error validating rules: %s rule #%d: network %q not found",
+					return fmt.Errorf("%s rule #%d: network %q not found",
 						direction,
 						i,
 						ruleCfg.Network,
 					)
-					return false
 				}
 			}
 
@@ -226,27 +217,24 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addr
 					if !ok {
 						container, err = r.dockerCli.ContainerInspect(ctx, listedCont.ID)
 						if err != nil {
-							log.Printf("error inspecting container %s: %v", ruleCfg.Container, err)
-							return false
+							return fmt.Errorf("error inspecting container %s: %v", ruleCfg.Container, err)
 						}
 						containers[ruleCfg.Container] = container
 					}
 
 					netName, network, ok := findNetwork(ruleCfg.Network, container.NetworkSettings.Networks)
 					if !ok {
-						log.Printf("error validating rules: %s rule #%d: network %q not found for container %q",
+						return fmt.Errorf("%s rule #%d: network %q not found for container %q",
 							direction,
 							i,
 							ruleCfg.Network,
 							ruleCfg.Container,
 						)
-						return false
 					}
 
 					addr, err := netip.ParseAddr(network.IPAddress)
 					if err != nil {
-						log.Printf("error parsing IP of container %q from network %q: %v", ruleCfg.Container, netName, err)
-						return false
+						return fmt.Errorf("error parsing IP of container %q from network %q: %v", ruleCfg.Container, netName, err)
 					}
 					rulesCfg[i].IP = addrOrRange{
 						addr: addr,
@@ -255,39 +243,37 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addr
 				}
 
 				if !found {
-					found, ok := r.processRequiredContainers(ctx, slashName, ch)
-					if !ok {
-						return false
+					found, err := r.processRequiredContainers(ctx, slashName, ch)
+					if err != nil {
+						return err
 					}
 					if !found {
-						log.Printf("error validating rules: %s rule #%d: container %q not found",
+						return fmt.Errorf("%s rule #%d: container %q not found",
 							direction,
 							i,
 							ruleCfg.Container,
 						)
-						return false
 					}
 
 					listedConts, err = r.dockerCli.ContainerList(ctx, types.ContainerListOptions{})
 					if err != nil {
-						log.Printf("error listing running containers: %v", err)
-						return false
+						return fmt.Errorf("error listing running containers: %v", err)
 					}
 				}
 			}
 		}
 
-		return true
+		return nil
 	}
 
-	if !validateNetworks(cfg.Input, "input") {
-		return false
+	if err := validateNetworks(cfg.Input, "input"); err != nil {
+		return err
 	}
-	if !validateNetworks(cfg.Output, "output") {
-		return false
+	if err := validateNetworks(cfg.Output, "output"); err != nil {
+		return err
 	}
 
-	return true
+	return nil
 }
 
 func findNetwork[T any](network string, addrs map[string]T) (string, T, bool) {
@@ -307,7 +293,7 @@ func findNetwork[T any](network string, addrs map[string]T) (string, T, bool) {
 	return "", zero, false
 }
 
-func (r *ruleManager) processRequiredContainers(ctx context.Context, name string, ch <-chan types.ContainerJSON) (bool, bool) {
+func (r *ruleManager) processRequiredContainers(ctx context.Context, name string, ch <-chan types.ContainerJSON) (bool, error) {
 	found := false
 	timer := time.NewTimer(containerStartTimeout)
 
@@ -318,8 +304,8 @@ func (r *ruleManager) processRequiredContainers(ctx context.Context, name string
 				<-timer.C
 			}
 
-			if !r.createRule(ctx, c, ch) {
-				return false, true
+			if err := r.createRule(ctx, c, ch); err != nil {
+				return false, err
 			}
 
 			if c.Name == name {
@@ -329,18 +315,18 @@ func (r *ruleManager) processRequiredContainers(ctx context.Context, name string
 				timer.Reset(containerStartTimeout)
 			}
 		case <-timer.C:
-			return false, false
+			return false, nil
 		}
 	}
 
-	return true, false
+	return true, nil
 }
 
 func buildChainName(name, id string) string {
 	return fmt.Sprintf("%s%s-%s", chainPrefix, name, id[:12])
 }
 
-func (r *ruleManager) createPortMappingRules(container types.ContainerJSON, contName string, mappedPortsCfg mappedPorts, addrs map[string][]byte, chain *nftables.Chain, nftRules []*nftables.Rule) ([]*nftables.Rule, bool) {
+func (r *ruleManager) createPortMappingRules(container types.ContainerJSON, contName string, mappedPortsCfg mappedPorts, addrs map[string][]byte, chain *nftables.Chain, nftRules []*nftables.Rule) ([]*nftables.Rule, error) {
 	// check if there are any mapped ports to create rules for
 	var hasMappedPorts bool
 	for _, hostPorts := range container.NetworkSettings.Ports {
@@ -355,18 +341,17 @@ func (r *ruleManager) createPortMappingRules(container types.ContainerJSON, cont
 		log.Printf("local and/or external access to mapped ports was allowed, but there are not any mapped ports for container %q",
 			contName,
 		)
-		return nftRules, true
+		return nftRules, nil
 	}
 	if !hasMappedPorts {
-		return nftRules, true
+		return nftRules, nil
 	}
 
 	hostPortRules := make(map[uint16][]*nftables.Rule)
 	for netName, netSettings := range container.NetworkSettings.Networks {
 		gateway, err := netip.ParseAddr(netSettings.Gateway)
 		if err != nil {
-			log.Printf("error parsing gateway of network: %v", err)
-			return nil, false
+			return nil, fmt.Errorf("error parsing gateway of network: %v", err)
 		}
 
 		for port, hostPorts := range container.NetworkSettings.Ports {
@@ -375,8 +360,7 @@ func (r *ruleManager) createPortMappingRules(container types.ContainerJSON, cont
 			for _, hostPort := range hostPorts {
 				addr, err := netip.ParseAddr(hostPort.HostIP)
 				if err != nil {
-					log.Printf("error parsing IP of port mapping: %v", err)
-					return nil, false
+					return nil, fmt.Errorf("error parsing IP of port mapping: %v", err)
 				}
 				// TODO: support IPv6
 				if addr.Is6() {
@@ -388,8 +372,7 @@ func (r *ruleManager) createPortMappingRules(container types.ContainerJSON, cont
 					// mapped port
 					hostPortInt, err := strconv.ParseUint(hostPort.HostPort, 10, 16)
 					if err != nil {
-						log.Printf("error parsing port of port mapping: %v", err)
-						return nil, false
+						return nil, fmt.Errorf("error parsing port of port mapping: %v", err)
 					}
 
 					rule := ruleDetails{
@@ -468,10 +451,10 @@ func (r *ruleManager) createPortMappingRules(container types.ContainerJSON, cont
 		}
 	}
 
-	return nftRules, true
+	return nftRules, nil
 }
 
-func (r *ruleManager) createStandardRules(ctx context.Context, inbound bool, ruleCfgs []ruleConfig, addrs map[string][]byte, chain *nftables.Chain, condID string, nftRules []*nftables.Rule) ([]*nftables.Rule, bool) {
+func (r *ruleManager) createStandardRules(ctx context.Context, inbound bool, ruleCfgs []ruleConfig, addrs map[string][]byte, chain *nftables.Chain, condID string, nftRules []*nftables.Rule) ([]*nftables.Rule, error) {
 	for _, ruleCfg := range ruleCfgs {
 		rule := ruleDetails{
 			inbound: inbound,
@@ -484,8 +467,7 @@ func (r *ruleManager) createStandardRules(ctx context.Context, inbound bool, rul
 		if ruleCfg.Network != "" {
 			_, addr, ok := findNetwork(ruleCfg.Network, addrs)
 			if !ok {
-				log.Printf("network %q not found", ruleCfg.Network)
-				return nil, false
+				return nil, fmt.Errorf("network %q not found", ruleCfg.Network)
 			}
 			rule.addr = addr
 
@@ -493,8 +475,7 @@ func (r *ruleManager) createStandardRules(ctx context.Context, inbound bool, rul
 				// TODO: process other containers it not found
 				id, err := r.db.GetContainerID(ctx, ruleCfg.Container)
 				if err != nil {
-					log.Printf("error getting container ID from database: %v", err)
-					return nil, false
+					return nil, fmt.Errorf("error getting container ID from database: %v", err)
 				}
 				rule.estContID = id
 				rule.estChain = &nftables.Chain{
@@ -516,7 +497,7 @@ func (r *ruleManager) createStandardRules(ctx context.Context, inbound bool, rul
 		}
 	}
 
-	return nftRules, true
+	return nftRules, nil
 }
 
 type ruleDetails struct {
