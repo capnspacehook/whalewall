@@ -17,7 +17,7 @@ func (r *ruleManager) syncContainers(ctx context.Context) error {
 	})
 	containers, err := r.dockerCli.ContainerList(ctx, types.ContainerListOptions{Filters: filter})
 	if err != nil {
-		return fmt.Errorf("error listing containers: %v", err)
+		return fmt.Errorf("error listing containers: %w", err)
 	}
 
 	for _, c := range containers {

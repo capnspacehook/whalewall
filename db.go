@@ -21,7 +21,7 @@ func (r *ruleManager) addContainer(ctx context.Context, logger *zap.Logger, id, 
 		Name: name,
 	})
 	if err != nil {
-		return fmt.Errorf("error adding container to database: %v", err)
+		return fmt.Errorf("error adding container to database: %w", err)
 	}
 
 	for _, addr := range addrs {
@@ -30,7 +30,7 @@ func (r *ruleManager) addContainer(ctx context.Context, logger *zap.Logger, id, 
 			ContainerID: id,
 		})
 		if err != nil {
-			return fmt.Errorf("error adding container addr to database: %v", err)
+			return fmt.Errorf("error adding container addr to database: %w", err)
 		}
 	}
 
@@ -45,7 +45,7 @@ func (r *ruleManager) deleteContainer(ctx context.Context, logger *zap.Logger, i
 	defer tx.Rollback(ctx)
 
 	if err := tx.DeleteContainerAddrs(ctx, id); err != nil {
-		return fmt.Errorf("error deleting container addrs : %v", err)
+		return fmt.Errorf("error deleting container addrs : %w", err)
 	}
 	if err := tx.DeleteContainer(ctx, id); err != nil {
 		return err

@@ -26,7 +26,7 @@ func (r *ruleManager) createBaseRules() error {
 
 	chains, err := r.nfc.ListChainsOfTableFamily(nftables.TableFamilyIPv4)
 	if err != nil {
-		return fmt.Errorf("error listing IPv4 chains: %v", err)
+		return fmt.Errorf("error listing IPv4 chains: %w", err)
 	}
 	var (
 		dockerChain *nftables.Chain
@@ -66,7 +66,7 @@ func (r *ruleManager) createBaseRules() error {
 	} else {
 		mainChainRules, err = r.nfc.GetRules(filterTable, r.chain)
 		if err != nil {
-			return fmt.Errorf("error listing rules of %q chain: %v", mainChainName, err)
+			return fmt.Errorf("error listing rules of %q chain: %w", mainChainName, err)
 		}
 		if len(mainChainRules) == 0 {
 			addContainerJumpRules = true
@@ -76,7 +76,7 @@ func (r *ruleManager) createBaseRules() error {
 	// add rule to jump from DOCKER-USER chain to whalewall chain
 	dockerRules, err := r.nfc.GetRules(filterTable, dockerChain)
 	if err != nil {
-		return fmt.Errorf("error listing rules of %q chain: %v", dockerChainName, err)
+		return fmt.Errorf("error listing rules of %q chain: %w", dockerChainName, err)
 	}
 	jumpRule := &nftables.Rule{
 		Table: filterTable,
@@ -111,7 +111,7 @@ func (r *ruleManager) createBaseRules() error {
 
 		rules, err := r.nfc.GetRules(filterTable, mainChain)
 		if err != nil {
-			return fmt.Errorf("error listing rules of %q chain: %v", name, err)
+			return fmt.Errorf("error listing rules of %q chain: %w", name, err)
 		}
 		jumpRule.Chain = mainChain
 		if !findRule(r.logger, jumpRule, rules) {
@@ -136,7 +136,7 @@ func (r *ruleManager) createBaseRules() error {
 		DataType: nftables.TypeVerdict,
 	}
 	if err := r.nfc.AddSet(r.containerAddrSet, nil); err != nil {
-		return fmt.Errorf("error adding set %q: %v", r.containerAddrSet.Name, err)
+		return fmt.Errorf("error adding set %q: %w", r.containerAddrSet.Name, err)
 	}
 
 	// create rules to jump to container chain if packet is from/to a container
@@ -190,7 +190,7 @@ func (r *ruleManager) createBaseRules() error {
 	}
 
 	if err := r.nfc.Flush(); err != nil {
-		return fmt.Errorf("error flushing nftables commands: %v", err)
+		return fmt.Errorf("error flushing nftables commands: %w", err)
 	}
 
 	return nil

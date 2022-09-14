@@ -34,7 +34,7 @@ type TX struct {
 func (d *DB) Begin(ctx context.Context, logger *zap.Logger) (*TX, error) {
 	tx, err := d.db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("error beginning database transaction: %v", err)
+		return nil, fmt.Errorf("error beginning database transaction: %w", err)
 	}
 
 	return &TX{
@@ -57,7 +57,7 @@ func (t *TX) Rollback(ctx context.Context) bool {
 
 func (t *TX) Commit(ctx context.Context) error {
 	if err := t.tx.Commit(); err != nil {
-		return fmt.Errorf("error committing database transaction: %v", err)
+		return fmt.Errorf("error committing database transaction: %w", err)
 	}
 
 	return nil

@@ -62,7 +62,7 @@ func (r *ruleManager) start(ctx context.Context, dbFile string) error {
 		return err
 	}
 	if err := r.createBaseRules(); err != nil {
-		return fmt.Errorf("error creating base rules: %v", err)
+		return fmt.Errorf("error creating base rules: %w", err)
 	}
 
 	if err := r.cleanupRules(ctx); err != nil {
@@ -156,29 +156,29 @@ func (r *ruleManager) init(ctx context.Context, dbFile string) error {
 
 	sqlDB, err := sql.Open("sqlite", dbFile)
 	if err != nil {
-		return fmt.Errorf("error opening database: %v", err)
+		return fmt.Errorf("error opening database: %w", err)
 	}
 	// create database schema if a sqlite file doesn't exist
 	if dbNotExist {
 		if _, err := sqlDB.ExecContext(ctx, dbSchema); err != nil {
-			return fmt.Errorf("error creating tables in database: %v", err)
+			return fmt.Errorf("error creating tables in database: %w", err)
 		}
 	}
 	if _, err := sqlDB.ExecContext(ctx, dbCommands); err != nil {
-		return fmt.Errorf("error executing commands in database: %v", err)
+		return fmt.Errorf("error executing commands in database: %w", err)
 	}
 	r.db, err = database.NewDB(ctx, sqlDB)
 	if err != nil {
-		return fmt.Errorf("error preparing database queries: %v", err)
+		return fmt.Errorf("error preparing database queries: %w", err)
 	}
 
 	r.dockerCli, err = client.NewClientWithOpts(client.FromEnv)
 	if err != nil {
-		return fmt.Errorf("error creating docker client: %v", err)
+		return fmt.Errorf("error creating docker client: %w", err)
 	}
 	c, err := nftables.New() // TODO: fix GetRules bug and make lasting
 	if err != nil {
-		return fmt.Errorf("error creating netlink connection: %v", err)
+		return fmt.Errorf("error creating netlink connection: %w", err)
 	}
 	r.nfc = c
 
@@ -211,6 +211,6 @@ func (r *ruleManager) stop() {
 		r.logger.Error("error closing docker client", zap.Error(err))
 	}
 	if err := r.db.Close(); err != nil {
-		r.logger.Error("error closing database: %v", zap.Error(err))
+		r.logger.Error("error closing database: %w", zap.Error(err))
 	}
 }

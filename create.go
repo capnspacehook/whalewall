@@ -21,6 +21,8 @@ import (
 )
 
 const (
+	composeProjectLabel = "com.docker.compose.project"
+
 	chainPrefix = "whalewall-"
 
 	containerStartTimeout = 5 * time.Second
@@ -35,11 +37,23 @@ const (
 	stateNewEst = stateNew | stateEst
 )
 
-var localAddr = netip.MustParseAddr("127.0.0.1")
+var (
+	errShuttingDown = errors.New("shutting down")
+	localAddr       = netip.MustParseAddr("127.0.0.1")
+)
 
 func (r *ruleManager) createRules(ctx context.Context) {
 	for container := range r.createCh {
-		r.createRule(ctx, container)
+		if err := r.createRule(ctx, container); err != nil {
+			if errors.Is(err, errShuttingDown) {
+				return
+			}
+			r.logger.Error("error creating rules",
+				zap.String("container.id", container.ID[:12]),
+				zap.String("container.name", stripName(container.Name)),
+				zap.Error(err),
+			)
+		}
 	}
 }
 
@@ -56,19 +70,20 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 	cfg, configExists := container.Config.Labels[rulesLabel]
 	if configExists {
 		if err := yaml.Unmarshal([]byte(cfg), &rulesCfg); err != nil {
-			return fmt.Errorf("error parsing rules: %v", err)
+			return fmt.Errorf("error parsing rules: %w", err)
 		}
 		if err := validateConfig(rulesCfg); err != nil {
-			return fmt.Errorf("error validating rules: %v", err)
+			return fmt.Errorf("error validating rules: %w", err)
 		}
 	}
+	project := container.Config.Labels[composeProjectLabel]
 
 	// ensure specified networks and containers in rules are valid
 	addrs := make(map[string][]byte, len(container.NetworkSettings.Networks))
 	for netName, netSettings := range container.NetworkSettings.Networks {
 		addr, err := netip.ParseAddr(netSettings.IPAddress)
 		if err != nil {
-			return fmt.Errorf("error parsing IP of container: %q: %v", contName, err)
+			return fmt.Errorf("error parsing IP of container: %q: %w", contName, err)
 		}
 		addrs[netName] = ref(addr.As4())[:]
 	}
@@ -86,20 +101,20 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 	// if no rules were explicitly specified, only the rule that drops
 	// traffic to/from the container will be added
 	if configExists {
-		if err := r.validateRuleNetworks(ctx, rulesCfg, addrs); err != nil {
-			return fmt.Errorf("error validating rules: %v", err)
+		if err := r.validateRuleNetworks(ctx, rulesCfg, project, addrs); err != nil {
+			return fmt.Errorf("error validating rules: %w", err)
 		}
 
 		// handle port mapping rules
 		var err error
 		nftRules, err = r.createPortMappingRules(logger, container, contName, rulesCfg.MappedPorts, addrs, chain, nftRules)
 		if err != nil {
-			return fmt.Errorf("error creating port mapping rules: %v", err)
+			return fmt.Errorf("error creating port mapping rules: %w", err)
 		}
 		// handle outbound rules
-		nftRules, err = r.createStandardRules(ctx, false, rulesCfg.Output, addrs, chain, container.ID, nftRules)
+		nftRules, err = r.createStandardRules(ctx, false, rulesCfg.Output, project, addrs, chain, container.ID, nftRules)
 		if err != nil {
-			return fmt.Errorf("error creating output rules: %v", err)
+			return fmt.Errorf("error creating output rules: %w", err)
 		}
 	}
 
@@ -127,7 +142,7 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 	// ensure we aren't creating existing rules
 	curRules, err := r.nfc.GetRules(r.chain.Table, r.chain)
 	if err != nil {
-		return fmt.Errorf("error getting rules of %q: %v", r.chain.Name, err)
+		return fmt.Errorf("error getting rules of %q: %w", r.chain.Name, err)
 	}
 	for i := range nftRules {
 		if nftRules[i].Chain.Name == mainChainName {
@@ -155,11 +170,11 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 	}
 
 	if err := r.nfc.SetAddElements(r.containerAddrSet, addrElems); err != nil {
-		return fmt.Errorf("error adding elements to set %q: %v", r.containerAddrSet.Name, err)
+		return fmt.Errorf("error adding elements to set %q: %w", r.containerAddrSet.Name, err)
 	}
 
 	if err := r.nfc.Flush(); err != nil {
-		return fmt.Errorf("error flushing nftables commands: %v", err)
+		return fmt.Errorf("error flushing nftables commands: %w", err)
 	}
 
 	logger.Debug("adding to database")
@@ -175,7 +190,7 @@ func stripName(name string) string {
 	return name
 }
 
-func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addrs map[string][]byte) error {
+func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, project string, addrs map[string][]byte) error {
 	var listedConts []types.Container
 	var err error
 
@@ -187,7 +202,7 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addr
 	if i != -1 {
 		listedConts, err = r.dockerCli.ContainerList(ctx, types.ContainerListOptions{})
 		if err != nil {
-			return fmt.Errorf("error listing running containers: %v", err)
+			return fmt.Errorf("error listing running containers: %w", err)
 		}
 	}
 
@@ -195,7 +210,7 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addr
 	for i, ruleCfg := range cfg.Output {
 		// ensure the specified network exist
 		if ruleCfg.Network != "" {
-			if _, _, ok := findNetwork(ruleCfg.Network, addrs); !ok {
+			if _, _, ok := findNetwork(ruleCfg.Network, project, addrs); !ok {
 				return fmt.Errorf("output rule #%d: network %q not found",
 					i,
 					ruleCfg.Network,
@@ -218,12 +233,12 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addr
 				if !ok {
 					container, err = r.dockerCli.ContainerInspect(ctx, listedCont.ID)
 					if err != nil {
-						return fmt.Errorf("error inspecting container %s: %v", ruleCfg.Container, err)
+						return fmt.Errorf("error inspecting container %s: %w", ruleCfg.Container, err)
 					}
 					containers[ruleCfg.Container] = container
 				}
 
-				netName, network, ok := findNetwork(ruleCfg.Network, container.NetworkSettings.Networks)
+				netName, network, ok := findNetwork(ruleCfg.Network, project, container.NetworkSettings.Networks)
 				if !ok {
 					return fmt.Errorf("output rule #%d: network %q not found for container %q",
 						i,
@@ -234,7 +249,7 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addr
 
 				addr, err := netip.ParseAddr(network.IPAddress)
 				if err != nil {
-					return fmt.Errorf("error parsing IP of container %q from network %q: %v", ruleCfg.Container, netName, err)
+					return fmt.Errorf("error parsing IP of container %q from network %q: %w", ruleCfg.Container, netName, err)
 				}
 				cfg.Output[i].IP = addrOrRange{
 					addr: addr,
@@ -243,9 +258,11 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addr
 			}
 
 			if !found {
+				// we need to add rules to this container's chain,
+				// but it hasn't been started yet
 				found, err := r.processRequiredContainers(ctx, slashName)
 				if err != nil {
-					return fmt.Errorf("error handling required container %q: %v", ruleCfg.Container, err)
+					return fmt.Errorf("error handling required container %q: %w", ruleCfg.Container, err)
 				}
 				if !found {
 					return fmt.Errorf("output rule #%d: container %q not found",
@@ -256,7 +273,7 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addr
 
 				listedConts, err = r.dockerCli.ContainerList(ctx, types.ContainerListOptions{})
 				if err != nil {
-					return fmt.Errorf("error listing running containers: %v", err)
+					return fmt.Errorf("error listing running containers: %w", err)
 				}
 			}
 		}
@@ -265,12 +282,11 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addr
 	return nil
 }
 
-func findNetwork[T any](network string, addrs map[string]T) (string, T, bool) {
+func findNetwork[T any](network, project string, addrs map[string]T) (string, T, bool) {
 	var zero T
 	netNames := []string{
 		network,
-		"compose_" + network,
-		"docker_" + network,
+		project + "_" + network,
 	}
 	for _, netName := range netNames {
 		v, ok := addrs[netName]
@@ -288,7 +304,10 @@ func (r *ruleManager) processRequiredContainers(ctx context.Context, name string
 
 	for !found {
 		select {
-		case c := <-r.createCh:
+		case c, ok := <-r.createCh:
+			if !ok {
+				return false, errShuttingDown
+			}
 			if !timer.Stop() {
 				<-timer.C
 			}
@@ -304,6 +323,8 @@ func (r *ruleManager) processRequiredContainers(ctx context.Context, name string
 				timer.Reset(containerStartTimeout)
 			}
 		case <-timer.C:
+			// timeout elapsed, container doesn't exist or is being very
+			// slow to start
 			return false, nil
 		}
 	}
@@ -338,7 +359,7 @@ func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types
 	for netName, netSettings := range container.NetworkSettings.Networks {
 		gateway, err := netip.ParseAddr(netSettings.Gateway)
 		if err != nil {
-			return nil, fmt.Errorf("error parsing gateway of network: %v", err)
+			return nil, fmt.Errorf("error parsing gateway of network: %w", err)
 		}
 
 		for port, hostPorts := range container.NetworkSettings.Ports {
@@ -347,7 +368,7 @@ func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types
 			for _, hostPort := range hostPorts {
 				addr, err := netip.ParseAddr(hostPort.HostIP)
 				if err != nil {
-					return nil, fmt.Errorf("error parsing IP of port mapping: %v", err)
+					return nil, fmt.Errorf("error parsing IP of port mapping: %w", err)
 				}
 				// TODO: support IPv6
 				if addr.Is6() {
@@ -359,7 +380,7 @@ func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types
 					// mapped port
 					hostPortInt, err := strconv.ParseUint(hostPort.HostPort, 10, 16)
 					if err != nil {
-						return nil, fmt.Errorf("error parsing port of port mapping: %v", err)
+						return nil, fmt.Errorf("error parsing port of port mapping: %w", err)
 					}
 
 					rule := ruleDetails{
@@ -441,7 +462,7 @@ func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types
 	return nftRules, nil
 }
 
-func (r *ruleManager) createStandardRules(ctx context.Context, inbound bool, ruleCfgs []ruleConfig, addrs map[string][]byte, chain *nftables.Chain, condID string, nftRules []*nftables.Rule) ([]*nftables.Rule, error) {
+func (r *ruleManager) createStandardRules(ctx context.Context, inbound bool, ruleCfgs []ruleConfig, project string, addrs map[string][]byte, chain *nftables.Chain, condID string, nftRules []*nftables.Rule) ([]*nftables.Rule, error) {
 	for _, ruleCfg := range ruleCfgs {
 		rule := ruleDetails{
 			inbound: inbound,
@@ -452,7 +473,7 @@ func (r *ruleManager) createStandardRules(ctx context.Context, inbound bool, rul
 		}
 
 		if ruleCfg.Network != "" {
-			_, addr, ok := findNetwork(ruleCfg.Network, addrs)
+			_, addr, ok := findNetwork(ruleCfg.Network, project, addrs)
 			if !ok {
 				return nil, fmt.Errorf("network %q not found", ruleCfg.Network)
 			}
@@ -461,10 +482,12 @@ func (r *ruleManager) createStandardRules(ctx context.Context, inbound bool, rul
 			if ruleCfg.Container != "" {
 				id, err := r.db.GetContainerID(ctx, ruleCfg.Container)
 				if err != nil && errors.Is(err, sql.ErrNoRows) {
+					// we need to add rules to this container's chain,
+					// but rules haven't been added to it yet
 					var found bool
 					found, err = r.processRequiredContainers(ctx, "/"+ruleCfg.Container)
 					if err != nil {
-						return nil, fmt.Errorf("error handling required container %q: %v", ruleCfg.Container, err)
+						return nil, fmt.Errorf("error handling required container %q: %w", ruleCfg.Container, err)
 					}
 					if !found {
 						return nil, fmt.Errorf("container %q not found", ruleCfg.Container)
@@ -472,7 +495,7 @@ func (r *ruleManager) createStandardRules(ctx context.Context, inbound bool, rul
 					id, err = r.db.GetContainerID(ctx, ruleCfg.Container)
 				}
 				if err != nil {
-					return nil, fmt.Errorf("error getting container %q ID from database: %v", ruleCfg.Container, err)
+					return nil, fmt.Errorf("error getting container %q ID from database: %w", ruleCfg.Container, err)
 				}
 				rule.estContID = id
 				rule.estChain = &nftables.Chain{

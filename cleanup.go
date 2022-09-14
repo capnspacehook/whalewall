@@ -11,7 +11,7 @@ import (
 func (r *ruleManager) cleanupRules(ctx context.Context) error {
 	containers, err := r.db.GetContainers(ctx)
 	if err != nil {
-		return fmt.Errorf("error getting containers from database: %v", err)
+		return fmt.Errorf("error getting containers from database: %w", err)
 	}
 
 	for _, container := range containers {
@@ -23,7 +23,7 @@ func (r *ruleManager) cleanupRules(ctx context.Context) error {
 				r.deleteContainerRules(ctx, container.ID, contName)
 				continue
 			} else {
-				r.logger.Error("error inspecting container: %v", zap.Error(err))
+				r.logger.Error("error inspecting container: %w", zap.Error(err))
 				continue
 			}
 		}
