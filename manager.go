@@ -8,18 +8,19 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
 	"os"
 	"sync"
 
-	"github.com/capnspacehook/whalewall/database"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
 	"github.com/google/nftables"
+	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 	_ "modernc.org/sqlite"
+
+	"github.com/capnspacehook/whalewall/database"
 )
 
 const (
@@ -36,6 +37,8 @@ type ruleManager struct {
 	wg   sync.WaitGroup
 	done chan struct{}
 
+	logger *zap.Logger
+
 	createCh chan types.ContainerJSON
 	deleteCh chan string
 
@@ -47,9 +50,10 @@ type ruleManager struct {
 	containerAddrSet *nftables.Set
 }
 
-func newRuleManager() *ruleManager {
+func newRuleManager(logger *zap.Logger) *ruleManager {
 	return &ruleManager{
-		done: make(chan struct{}),
+		done:   make(chan struct{}),
+		logger: logger,
 	}
 }
 
@@ -62,7 +66,7 @@ func (r *ruleManager) start(ctx context.Context, dbFile string) error {
 	}
 
 	if err := r.cleanupRules(ctx); err != nil {
-		log.Printf("error cleaning up rules: %v", err)
+		r.logger.Error("error cleaning up rules", zap.Error(err))
 	}
 
 	r.createCh = make(chan types.ContainerJSON)
@@ -79,7 +83,7 @@ func (r *ruleManager) start(ctx context.Context, dbFile string) error {
 	}()
 
 	if err := r.syncContainers(ctx); err != nil {
-		log.Printf("error syncing containers: %v", err)
+		r.logger.Error("error syncing containers", zap.Error(err))
 	}
 
 	r.wg.Add(1)
@@ -93,7 +97,7 @@ func (r *ruleManager) start(ctx context.Context, dbFile string) error {
 				if e, ok := msg.Actor.Attributes[enabledLabel]; ok {
 					var enabled bool
 					if err := yaml.Unmarshal([]byte(e), &enabled); err != nil {
-						log.Printf("error parsing %q label: %v", enabledLabel, err)
+						r.logger.Error("error parsing label", zap.String("label", enabledLabel), zap.Error(err))
 						continue
 					}
 					if !enabled {
@@ -103,7 +107,7 @@ func (r *ruleManager) start(ctx context.Context, dbFile string) error {
 					if msg.Action == "start" {
 						container, err := r.dockerCli.ContainerInspect(ctx, msg.ID)
 						if err != nil {
-							log.Printf("error inspecting container: %v", err)
+							r.logger.Error("error inspecting container", zap.String("container.id", msg.ID), zap.Error(err))
 							continue
 						}
 						r.createCh <- container
@@ -120,12 +124,12 @@ func (r *ruleManager) start(ctx context.Context, dbFile string) error {
 					continue
 				}
 				if !errors.Is(err, io.EOF) {
-					log.Printf("error reading docker event stream: %v", err)
+					r.logger.Error("error reading docker event stream", zap.Error(err))
 				}
-				log.Println("recreating docker client")
+				r.logger.Info("recreating docker client")
 				r.dockerCli, err = client.NewClientWithOpts(client.FromEnv)
 				if err != nil {
-					log.Fatalf("error creating docker client: %v", err)
+					r.logger.Fatal("error creating docker client", zap.Error(err))
 				}
 				messages, streamErrs = addFilters(ctx, r.dockerCli)
 			case <-r.done:
@@ -204,9 +208,9 @@ func (r *ruleManager) stop() {
 	r.wg.Wait()
 
 	if err := r.dockerCli.Close(); err != nil {
-		log.Printf("error closing docker client: %v", err)
+		r.logger.Error("error closing docker client", zap.Error(err))
 	}
 	if err := r.db.Close(); err != nil {
-		log.Printf("error closing database: %v", err)
+		r.logger.Error("error closing database: %v", zap.Error(err))
 	}
 }

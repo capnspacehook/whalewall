@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"log"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/google/nftables"
 	"github.com/google/nftables/expr"
+	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 	"golang.org/x/sys/unix"
 	"gopkg.in/yaml.v3"
@@ -44,9 +44,10 @@ func (r *ruleManager) createRules(ctx context.Context) {
 }
 
 func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJSON) error {
-	// container name appears with prefix "/"
-	contName := strings.Replace(container.Name, "/", "", 1)
-	log.Printf("adding rules for %q", contName)
+	contName := stripName(container.Name)
+	logger := r.logger.With(zap.String("container.id", container.ID[:12]), zap.String("container.name", contName))
+
+	logger.Info("adding rules")
 
 	// parse rules config if the rules label exists; if the label
 	// does not exist, no rules will be added but all traffic to
@@ -91,7 +92,7 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 
 		// handle port mapping rules
 		var err error
-		nftRules, err = r.createPortMappingRules(container, contName, rulesCfg.MappedPorts, addrs, chain, nftRules)
+		nftRules, err = r.createPortMappingRules(logger, container, contName, rulesCfg.MappedPorts, addrs, chain, nftRules)
 		if err != nil {
 			return fmt.Errorf("error creating port mapping rules: %v", err)
 		}
@@ -130,7 +131,7 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 	}
 	for i := range nftRules {
 		if nftRules[i].Chain.Name == mainChainName {
-			if findRule(nftRules[i], curRules) {
+			if findRule(logger, nftRules[i], curRules) {
 				nftRules = slices.Delete(nftRules, i, i)
 			}
 		}
@@ -161,9 +162,17 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 		return fmt.Errorf("error flushing nftables commands: %v", err)
 	}
 
-	log.Printf("adding %q to database", contName)
+	logger.Debug("adding to database")
 
-	return r.addContainer(ctx, container.ID, contName, addrs)
+	return r.addContainer(ctx, logger, container.ID, contName, addrs)
+}
+
+// container name appears with prefix "/"
+func stripName(name string) string {
+	if len(name) > 0 && name[0] == '/' {
+		name = name[1:]
+	}
+	return name
 }
 
 func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, addrs map[string][]byte) error {
@@ -306,7 +315,7 @@ func buildChainName(name, id string) string {
 	return fmt.Sprintf("%s%s-%s", chainPrefix, name, id[:12])
 }
 
-func (r *ruleManager) createPortMappingRules(container types.ContainerJSON, contName string, mappedPortsCfg mappedPorts, addrs map[string][]byte, chain *nftables.Chain, nftRules []*nftables.Rule) ([]*nftables.Rule, error) {
+func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types.ContainerJSON, contName string, mappedPortsCfg mappedPorts, addrs map[string][]byte, chain *nftables.Chain, nftRules []*nftables.Rule) ([]*nftables.Rule, error) {
 	// check if there are any mapped ports to create rules for
 	var hasMappedPorts bool
 	for _, hostPorts := range container.NetworkSettings.Ports {
@@ -318,9 +327,7 @@ func (r *ruleManager) createPortMappingRules(container types.ContainerJSON, cont
 		}
 	}
 	if (mappedPortsCfg.Local.Allow || mappedPortsCfg.External.Allow) && !hasMappedPorts {
-		log.Printf("local and/or external access to mapped ports was allowed, but there are not any mapped ports for container %q",
-			contName,
-		)
+		logger.Warn("local and/or external access to mapped ports was allowed, but there are not any mapped ports")
 		return nftRules, nil
 	}
 	if !hasMappedPorts {

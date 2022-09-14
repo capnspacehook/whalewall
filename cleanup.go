@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 
 	"github.com/docker/docker/client"
+	"go.uber.org/zap"
 )
 
 func (r *ruleManager) cleanupRules(ctx context.Context) error {
@@ -18,17 +18,19 @@ func (r *ruleManager) cleanupRules(ctx context.Context) error {
 		c, err := r.dockerCli.ContainerInspect(ctx, container.ID)
 		if err != nil {
 			if client.IsErrNotFound(err) {
-				log.Printf("cleaning rules of removed container %s", container.Name)
-				r.deleteContainerRules(ctx, container.ID)
+				contName := stripName(container.Name)
+				r.logger.Info("cleaning rules of removed container", zap.String("container.id", container.ID[:12]), zap.String("container.name", contName))
+				r.deleteContainerRules(ctx, container.ID, contName)
 				continue
 			} else {
-				log.Printf("error inspecting container: %v", err)
+				r.logger.Error("error inspecting container: %v", zap.Error(err))
 				continue
 			}
 		}
 		if !c.State.Running {
-			log.Printf("cleaning rules of stopped container %s", container.Name)
-			r.deleteContainerRules(ctx, container.ID)
+			contName := stripName(container.Name)
+			r.logger.Info("cleaning rules of stopped container", zap.String("container.id", container.ID[:12]), zap.String("container.name", contName))
+			r.deleteContainerRules(ctx, container.ID, stripName(container.Name))
 		}
 	}
 

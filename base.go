@@ -3,10 +3,10 @@ package main
 import (
 	"errors"
 	"fmt"
-	"log"
 
 	"github.com/google/nftables"
 	"github.com/google/nftables/expr"
+	"go.uber.org/zap"
 )
 
 const (
@@ -89,14 +89,14 @@ func (r *ruleManager) createBaseRules() error {
 			},
 		},
 	}
-	if !findRule(jumpRule, dockerRules) {
+	if !findRule(r.logger, jumpRule, dockerRules) {
 		r.nfc.InsertRule(jumpRule)
 	}
 
 	// add rule to jump from INPUT/OUTPUT chains to whalewall chain
 	handleMainChain := func(name string, hook *nftables.ChainHook, mainChain *nftables.Chain) error {
 		if mainChain == nil {
-			log.Printf("creating %s chain", name)
+			r.logger.Debug("creating chain", zap.String("chain.name", name))
 			// INPUT and OUTPUT sometimes don't exist in nftables
 			mainChain = &nftables.Chain{
 				Name:     name,
@@ -114,7 +114,7 @@ func (r *ruleManager) createBaseRules() error {
 			return fmt.Errorf("error listing rules of %q chain: %v", name, err)
 		}
 		jumpRule.Chain = mainChain
-		if !findRule(jumpRule, rules) {
+		if !findRule(r.logger, jumpRule, rules) {
 			r.nfc.InsertRule(jumpRule)
 		}
 
@@ -161,7 +161,7 @@ func (r *ruleManager) createBaseRules() error {
 			},
 		},
 	}
-	if addContainerJumpRules || !findRule(srcJumpRule, mainChainRules) {
+	if addContainerJumpRules || !findRule(r.logger, srcJumpRule, mainChainRules) {
 		r.nfc.AddRule(srcJumpRule)
 	}
 	dstJumpRule := &nftables.Rule{
@@ -185,7 +185,7 @@ func (r *ruleManager) createBaseRules() error {
 			},
 		},
 	}
-	if addContainerJumpRules || !findRule(dstJumpRule, mainChainRules) {
+	if addContainerJumpRules || !findRule(r.logger, dstJumpRule, mainChainRules) {
 		r.nfc.AddRule(dstJumpRule)
 	}
 

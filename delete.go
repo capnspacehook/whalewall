@@ -4,29 +4,30 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"log"
 	"syscall"
 
 	"github.com/google/nftables"
+	"go.uber.org/zap"
 )
 
 func (r *ruleManager) deleteRules(ctx context.Context) {
 	for id := range r.deleteCh {
 		name, err := r.db.GetContainerName(ctx, id)
 		if err != nil {
-			log.Printf("error getting name of container %s: %v", id, err)
+			r.logger.Error("error getting name of container", zap.String("container.id", id[:12]), zap.Error(err))
 			continue
 		}
-		log.Printf("deleting rules of %q", name)
+		r.logger.Info("deleting rules", zap.String("container.id", id[:12]), zap.String("container.name", name))
 
-		r.deleteContainerRules(ctx, id)
+		r.deleteContainerRules(ctx, id, name)
 	}
 }
 
-func (r *ruleManager) deleteContainerRules(ctx context.Context, id string) {
+func (r *ruleManager) deleteContainerRules(ctx context.Context, id, name string) {
+	logger := r.logger.With(zap.String("container.id", id[:12]), zap.String("container.name", name))
 	rules, err := r.nfc.GetRules(r.chain.Table, r.chain)
 	if err != nil {
-		log.Printf("error getting rules of chain %q: %v", r.chain.Name, err)
+		logger.Error("error getting rules of chain", zap.String("chain.name", r.chain.Name), zap.Error(err))
 		return
 	}
 
@@ -38,45 +39,42 @@ func (r *ruleManager) deleteContainerRules(ctx context.Context, id string) {
 			// rules are deleted
 			err = r.nfc.Flush()
 			if err != nil && !errors.Is(err, syscall.ENOENT) {
-				log.Printf("error deleting rule: %v", err)
+				logger.Error("error deleting rule", zap.Error(err))
 			}
 		}
 	}
 
 	addrs, err := r.db.GetContainerAddrs(ctx, id)
 	if err != nil {
-		log.Printf("error getting container addrs: %v", err)
+		logger.Error("error getting container addrs", zap.Error(err))
 		return
 	}
 
 	for _, addr := range addrs {
 		e := []nftables.SetElement{{Key: addr}}
 		if err := r.nfc.SetDeleteElements(r.containerAddrSet, e); err != nil {
-			log.Printf("error marshalling set elements: %v", err)
+			logger.Error("error marshalling set elements", zap.Error(err))
 			continue
 		}
 		// flush after every element deletion to ensure all possible
 		// elements are deleted
 		err = r.nfc.Flush()
 		if err != nil && !errors.Is(err, syscall.ENOENT) {
-			log.Printf("error deleting set element: %v", err)
+			logger.Error("error deleting set element", zap.Error(err))
 		}
 	}
 
-	name, err := r.db.GetContainerName(ctx, id)
-	if err != nil {
-		log.Printf("error getting container name: %v", err)
-		return
-	}
-
+	chainName := buildChainName(name, id)
 	r.nfc.DelChain(&nftables.Chain{
 		Table: r.chain.Table,
-		Name:  buildChainName(name, id),
+		Name:  chainName,
 	})
 	err = r.nfc.Flush()
 	if err != nil && !errors.Is(err, syscall.ENOENT) {
-		log.Printf("error deleting chain: %v", err)
+		logger.Error("error deleting chain", zap.String("chain.name", chainName), zap.Error(err))
 	}
 
-	r.deleteContainer(ctx, id)
+	if err := r.deleteContainer(ctx, logger, id); err != nil {
+		logger.Error("error deleting container from database", zap.Error(err))
+	}
 }

@@ -3,10 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
+	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 )
 
@@ -23,7 +23,7 @@ func (r *ruleManager) syncContainers(ctx context.Context) error {
 	for _, c := range containers {
 		e, err := r.db.ContainerExists(ctx, c.ID)
 		if err != nil {
-			log.Printf("error querying container %q from database: %v", c.ID, err)
+			r.logger.Error("error querying container from database", zap.String("container.id", c.ID), zap.Error(err))
 			continue
 		}
 		exists, ok := e.(int64)
@@ -39,14 +39,14 @@ func (r *ruleManager) syncContainers(ctx context.Context) error {
 
 		container, err := r.dockerCli.ContainerInspect(ctx, c.ID)
 		if err != nil {
-			log.Printf("error inspecting container: %v", err)
+			r.logger.Error("error inspecting container", zap.String("container.id", c.ID), zap.Error(err))
 			continue
 		}
 
 		if e, ok := container.Config.Labels[enabledLabel]; ok {
 			var enabled bool
 			if err := yaml.Unmarshal([]byte(e), &enabled); err != nil {
-				log.Printf("error parsing %q label: %v", enabledLabel, err)
+				r.logger.Error("error parsing label", zap.String("label", enabledLabel), zap.Error(err))
 				continue
 			}
 			if enabled {

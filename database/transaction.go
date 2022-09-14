@@ -5,7 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
+
+	"go.uber.org/zap"
 )
 
 type DB struct {
@@ -27,9 +28,10 @@ func NewDB(ctx context.Context, db *sql.DB) (*DB, error) {
 
 type TX struct {
 	*Queries
+	logger *zap.Logger
 }
 
-func (d *DB) Begin(ctx context.Context) (*TX, error) {
+func (d *DB) Begin(ctx context.Context, logger *zap.Logger) (*TX, error) {
 	tx, err := d.db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("error beginning database transaction: %v", err)
@@ -37,6 +39,7 @@ func (d *DB) Begin(ctx context.Context) (*TX, error) {
 
 	return &TX{
 		Queries: d.WithTx(tx),
+		logger:  logger,
 	}, nil
 }
 
@@ -45,7 +48,7 @@ func (t *TX) Rollback(ctx context.Context) bool {
 		if errors.Is(err, sql.ErrTxDone) {
 			return false
 		}
-		log.Printf("error rolling back database transaction: %v", err)
+		t.logger.Error("error rolling back database transaction", zap.Error(err))
 		return false
 	}
 
