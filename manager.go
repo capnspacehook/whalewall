@@ -24,7 +24,10 @@ import (
 )
 
 const (
-	dbCommands = "PRAGMA busy_timeout = 1000;"
+	dbCommands = `
+PRAGMA busy_timeout = 1000;
+PRAGMA journal_mode=WAL;
+`
 
 	enabledLabel = "whalewall.enabled"
 	rulesLabel   = "whalewall.rules"

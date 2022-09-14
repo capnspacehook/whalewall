@@ -22,6 +22,8 @@ func init() {
 }
 
 func main() {
+	flag.Parse()
+
 	logCfg := zap.NewProductionConfig()
 	logCfg.OutputPaths = []string{logPath}
 	if debugLogs {
