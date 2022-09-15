@@ -15,8 +15,8 @@ type config struct {
 }
 
 type mappedPorts struct {
-	Local    localRules
-	External externalRules
+	Localhost localRules
+	External  externalRules
 }
 
 // TODO: allow users to specify addrOrRange that is within 127.0.0.1/8?

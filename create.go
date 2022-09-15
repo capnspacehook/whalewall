@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"strconv"
 	"strings"
 	"time"
 
@@ -396,7 +395,7 @@ func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types
 			break
 		}
 	}
-	if (mappedPortsCfg.Local.Allow || mappedPortsCfg.External.Allow) && !hasMappedPorts {
+	if (mappedPortsCfg.Localhost.Allow || mappedPortsCfg.External.Allow) && !hasMappedPorts {
 		logger.Warn("local and/or external access to mapped ports is allowed, but there are not any mapped ports")
 		return nftRules, nil, nil
 	}
@@ -412,7 +411,7 @@ func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types
 		}
 
 		for port, hostPorts := range container.NetworkSettings.Ports {
-			localAllowed := mappedPortsCfg.Local.Allow
+			localAllowed := mappedPortsCfg.Localhost.Allow
 			for _, hostPort := range hostPorts {
 				addr, err := netip.ParseAddr(hostPort.HostIP)
 				if err != nil {
@@ -424,14 +423,14 @@ func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types
 				}
 
 				// TODO: make same checks for external
-				if !addr.IsUnspecified() && addr != localAddr && localAllowed {
+				if localAllowed && !addr.IsUnspecified() && addr != localAddr {
 					logger.Sugar().Warnf("local access to mapped ports is allowed, but port %s is listening on %s which is not accessible to localhost",
 						hostPort.HostPort,
 						addr,
 					)
 					continue
 				}
-				if !addr.IsUnspecified() && addr != localAddr && !localAllowed {
+				if !localAllowed && !addr.IsUnspecified() && addr != localAddr {
 					// local access is not allowed, but localhost won't
 					// be able to reach this port anyway since it isn't
 					// listening on 0.0.0.0 or 127.0.0.1, so no need to
@@ -439,34 +438,7 @@ func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types
 					continue
 				}
 
-				if !localAllowed {
-					// create rules to drop traffic from localhost to
-					// mapped port
-					hostPortInt, err := strconv.ParseUint(hostPort.HostPort, 10, 16)
-					if err != nil {
-						return nil, nil, fmt.Errorf("error parsing port of port mapping: %w", err)
-					}
-
-					rule := ruleDetails{
-						inbound: true,
-						cfg: ruleConfig{
-							IP: addrOrRange{
-								addr: localAddr,
-							},
-							Proto:   port.Proto(),
-							Port:    uint16(hostPortInt),
-							Verdict: mappedPortsCfg.Local.Verdict,
-						},
-						allow:  false,
-						chain:  r.chain,
-						contID: container.ID,
-					}
-					// since these rules won't have a destination
-					// IP, ensure they won't be added multiple times
-					if _, ok := hostPortRules[uint16(hostPortInt)]; !ok {
-						hostPortRules[uint16(hostPortInt)] = createNFTRules(rule)
-					}
-				} else if !mappedPortsCfg.External.Allow || mappedPortsCfg.External.IP.IsValid() {
+				if localAllowed && (!mappedPortsCfg.External.Allow || mappedPortsCfg.External.IP.IsValid()) {
 					// Create rules to allow/drop traffic from container
 					// network gateway to container; this will only be hit
 					// for traffic originating from localhost after being
@@ -483,7 +455,7 @@ func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types
 							},
 							Proto:   port.Proto(),
 							Port:    uint16(port.Int()),
-							Verdict: mappedPortsCfg.Local.Verdict,
+							Verdict: mappedPortsCfg.Localhost.Verdict,
 						},
 						allow:  true,
 						chain:  chain,
