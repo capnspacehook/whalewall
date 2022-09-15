@@ -17,9 +17,12 @@
 # C extensions
 *.so
 
+# VSCode
+*.code-workspace
+.vscode/*
+
 *.log
 
-*.code-workspace
 whalewall
 db.sqlite*
-cmd/cmd
+cmd/*

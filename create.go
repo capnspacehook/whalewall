@@ -22,6 +22,8 @@ import (
 
 const (
 	composeProjectLabel = "com.docker.compose.project"
+	composeServiceLabel = "com.docker.compose.service"
+	composeContNumLabel = "com.docker.compose.container-number"
 
 	chainPrefix = "whalewall-"
 
@@ -189,8 +191,9 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 	}
 
 	logger.Debug("adding to database")
+	service := container.Config.Labels[composeServiceLabel]
 
-	return r.addContainer(ctx, logger, container.ID, contName, addrs, estContainers)
+	return r.addContainer(ctx, logger, container.ID, contName, service, addrs, estContainers)
 }
 
 // container name appears with prefix "/"
@@ -233,9 +236,8 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, proj
 		// the specified network
 		if ruleCfg.Container != "" {
 			var found bool
-			slashName := "/" + ruleCfg.Container
 			for _, listedCont := range listedConts {
-				if !slices.Contains(listedCont.Names, slashName) {
+				if !containerNameMatches(ruleCfg.Container, listedCont.Labels, listedCont.Names...) {
 					continue
 				}
 				estContainers[listedCont.ID] = struct{}{}
@@ -272,7 +274,7 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, proj
 			if !found {
 				// we need to add rules to this container's chain,
 				// but it hasn't been started yet
-				found, err := r.processRequiredContainers(ctx, slashName)
+				found, err := r.processRequiredContainers(ctx, ruleCfg.Container)
 				if err != nil {
 					return fmt.Errorf("error handling required container %q: %w", ruleCfg.Container, err)
 				}
@@ -291,7 +293,7 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, proj
 				}
 				// add container to list of established containers
 				for _, listedCont := range listedConts {
-					if slices.Contains(listedCont.Names, slashName) {
+					if containerNameMatches(ruleCfg.Container, listedCont.Labels, listedCont.Names...) {
 						estContainers[listedCont.ID] = struct{}{}
 						break
 					}
@@ -319,7 +321,34 @@ func findNetwork[T any](network, project string, addrs map[string]T) (string, T,
 	return "", zero, false
 }
 
-func (r *ruleManager) processRequiredContainers(ctx context.Context, name string) (bool, error) {
+func containerNameMatches(expectedName string, labels map[string]string, names ...string) bool {
+	if len(expectedName) == 0 {
+		return false
+	}
+
+	// maybe user prefixed a backslash already?
+	if slices.Contains(names, expectedName) {
+		return true
+	}
+	// docker prepends a backslash to container names
+	slashPrefix := expectedName[0] == '/'
+	if !slashPrefix && slices.Contains(names, "/"+expectedName) {
+		return true
+	}
+	// if the user did prefix a slash, remove it here so we hopefully
+	// get a match; the service name won't be prefixed with a backslash
+	if slashPrefix {
+		expectedName = expectedName[1:]
+	}
+	// check if the docker compose service name matches
+	if serviceName, ok := labels[composeServiceLabel]; ok && serviceName == expectedName {
+		return true
+	}
+
+	return false
+}
+
+func (r *ruleManager) processRequiredContainers(ctx context.Context, contName string) (bool, error) {
 	found := false
 	timer := time.NewTimer(containerStartTimeout)
 
@@ -337,10 +366,8 @@ func (r *ruleManager) processRequiredContainers(ctx context.Context, name string
 				return false, err
 			}
 
-			// TODO: support matching names with compose labels
-			if c.Name == name {
+			if containerNameMatches(contName, c.Config.Labels, c.Name) {
 				found = true
-
 			} else {
 				timer.Reset(containerStartTimeout)
 			}
@@ -516,26 +543,26 @@ func (r *ruleManager) createOutputRules(ctx context.Context, ruleCfgs []ruleConf
 			rule.addr = addr
 
 			if ruleCfg.Container != "" {
-				id, err := r.db.GetContainerID(ctx, ruleCfg.Container)
+				id, name, err := r.getContainerIDAndName(ctx, ruleCfg.Container)
 				if err != nil && errors.Is(err, sql.ErrNoRows) {
 					// we need to add rules to this container's chain,
 					// but rules haven't been added to it yet
 					var found bool
-					found, err = r.processRequiredContainers(ctx, "/"+ruleCfg.Container)
+					found, err = r.processRequiredContainers(ctx, ruleCfg.Container)
 					if err != nil {
 						return nil, fmt.Errorf("error handling required container %q: %w", ruleCfg.Container, err)
 					}
 					if !found {
 						return nil, fmt.Errorf("container %q not found", ruleCfg.Container)
 					}
-					id, err = r.db.GetContainerID(ctx, ruleCfg.Container)
+					id, name, err = r.getContainerIDAndName(ctx, ruleCfg.Container)
 				}
 				if err != nil {
 					return nil, fmt.Errorf("error getting container %q ID from database: %w", ruleCfg.Container, err)
 				}
 				rule.estChain = &nftables.Chain{
 					Table: r.chain.Table,
-					Name:  buildChainName(ruleCfg.Container, id),
+					Name:  buildChainName(name, id),
 				}
 			}
 
@@ -553,6 +580,27 @@ func (r *ruleManager) createOutputRules(ctx context.Context, ruleCfgs []ruleConf
 	}
 
 	return nftRules, nil
+}
+
+func (r *ruleManager) getContainerIDAndName(ctx context.Context, contName string) (string, string, error) {
+	name := contName
+
+	id, err := r.db.GetContainerID(ctx, contName)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return "", "", fmt.Errorf("error getting container %q ID from database: %w", contName, err)
+		}
+
+		info, err := r.db.GetContainerIDAndNameFromAlias(ctx, contName)
+		if err != nil {
+			return "", "", fmt.Errorf("error getting container %q ID from database: %w", contName, err)
+		}
+
+		id = info.ID
+		name = info.Name
+	}
+
+	return id, name, nil
 }
 
 type ruleDetails struct {

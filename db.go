@@ -9,7 +9,7 @@ import (
 	"github.com/capnspacehook/whalewall/database"
 )
 
-func (r *ruleManager) addContainer(ctx context.Context, logger *zap.Logger, id, name string, addrs map[string][]byte, estContainers map[string]struct{}) error {
+func (r *ruleManager) addContainer(ctx context.Context, logger *zap.Logger, id, name, service string, addrs map[string][]byte, estContainers map[string]struct{}) error {
 	tx, err := r.db.Begin(ctx, logger)
 	if err != nil {
 		return err
@@ -31,6 +31,23 @@ func (r *ruleManager) addContainer(ctx context.Context, logger *zap.Logger, id, 
 		})
 		if err != nil {
 			return fmt.Errorf("error adding container addr to database: %w", err)
+		}
+	}
+
+	// add names the container may have been referred to in user rules
+	// so when creating rules that specify this container it can be found
+	aliases := []string{"/" + name}
+	if service != "" {
+		aliases = append(aliases, service)
+		aliases = append(aliases, "/"+service)
+	}
+	for _, alias := range aliases {
+		err := tx.AddContainerAlias(ctx, database.AddContainerAliasParams{
+			ContainerID:    id,
+			ContainerAlias: alias,
+		})
+		if err != nil {
+			return fmt.Errorf("error adding container alias to database: %w", err)
 		}
 	}
 
@@ -57,7 +74,10 @@ func (r *ruleManager) deleteContainer(ctx context.Context, logger *zap.Logger, i
 	defer tx.Rollback(ctx)
 
 	if err := tx.DeleteContainerAddrs(ctx, id); err != nil {
-		return fmt.Errorf("error deleting container addrs : %w", err)
+		return fmt.Errorf("error deleting container addrs: %w", err)
+	}
+	if err := tx.DeleteContainerAliases(ctx, id); err != nil {
+		return fmt.Errorf("error deleting container aliases: %w", err)
 	}
 	if err := tx.DeleteEstContainers(ctx, id); err != nil {
 		return fmt.Errorf("error deleting established container: %w", err)

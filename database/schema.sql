@@ -10,6 +10,14 @@ CREATE TABLE addrs (
   FOREIGN KEY(container_id) REFERENCES containers(id)
 );
 
+CREATE TABLE container_aliases (
+  container_id    TEXT NOT NULL,
+  container_alias TEXT NOT NULL,
+
+  PRIMARY KEY(container_id, container_alias),
+  FOREIGN KEY(container_id) REFERENCES containers(id)
+);
+
 CREATE TABLE est_containers (
   src_container_id TEXT NOT NULL,
   dst_container_id TEXT NOT NULL,

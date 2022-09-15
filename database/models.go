@@ -16,6 +16,11 @@ type Container struct {
 	Name string
 }
 
+type ContainerAlias struct {
+	ContainerID    string
+	ContainerAlias string
+}
+
 type EstContainer struct {
 	SrcContainerID string
 	DstContainerID string

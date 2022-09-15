@@ -49,6 +49,26 @@ func (q *Queries) AddContainerAddr(ctx context.Context, arg AddContainerAddrPara
 	return err
 }
 
+const addContainerAlias = `-- name: AddContainerAlias :exec
+INSERT INTO
+	container_aliases(container_id, container_alias)
+VALUES
+	(
+		?,
+		?
+	)
+`
+
+type AddContainerAliasParams struct {
+	ContainerID    string
+	ContainerAlias string
+}
+
+func (q *Queries) AddContainerAlias(ctx context.Context, arg AddContainerAliasParams) error {
+	_, err := q.exec(ctx, q.addContainerAliasStmt, addContainerAlias, arg.ContainerID, arg.ContainerAlias)
+	return err
+}
+
 const addEstContainer = `-- name: AddEstContainer :exec
 INSERT INTO
 	est_containers(src_container_id, dst_container_id)
@@ -112,6 +132,18 @@ func (q *Queries) DeleteContainerAddrs(ctx context.Context, containerID string) 
 	return err
 }
 
+const deleteContainerAliases = `-- name: DeleteContainerAliases :exec
+DELETE FROM
+	container_aliases
+WHERE
+	container_id = ?
+`
+
+func (q *Queries) DeleteContainerAliases(ctx context.Context, containerID string) error {
+	_, err := q.exec(ctx, q.deleteContainerAliasesStmt, deleteContainerAliases, containerID)
+	return err
+}
+
 const deleteEstContainers = `-- name: DeleteEstContainers :exec
 DELETE FROM
 	est_containers
@@ -170,6 +202,27 @@ func (q *Queries) GetContainerID(ctx context.Context, name string) (string, erro
 	var id string
 	err := row.Scan(&id)
 	return id, err
+}
+
+const getContainerIDAndNameFromAlias = `-- name: GetContainerIDAndNameFromAlias :one
+SELECT
+	c.id,
+	c.name
+FROM
+	containers c
+JOIN
+	container_aliases a
+ON
+	a.container_id = c.id
+WHERE
+	a.container_alias = ?
+`
+
+func (q *Queries) GetContainerIDAndNameFromAlias(ctx context.Context, containerAlias string) (Container, error) {
+	row := q.queryRow(ctx, q.getContainerIDAndNameFromAliasStmt, getContainerIDAndNameFromAlias, containerAlias)
+	var i Container
+	err := row.Scan(&i.ID, &i.Name)
+	return i, err
 }
 
 const getContainerName = `-- name: GetContainerName :one
