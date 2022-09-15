@@ -89,6 +89,7 @@ func (r *ruleManager) deleteContainerRules(ctx context.Context, id, name string)
 		logger.Error("error deleting chain", zap.String("chain.name", chainName), zap.Error(err))
 	}
 
+	logger.Debug("deleting from database")
 	if err := r.deleteContainer(ctx, logger, id); err != nil {
 		logger.Error("error deleting container from database", zap.Error(err))
 	}

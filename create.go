@@ -587,7 +587,6 @@ type ruleDetails struct {
 
 func createNFTRules(r ruleDetails) []*nftables.Rule {
 	rules := make([]*nftables.Rule, 0, 3)
-	// TODO: delete rule from est chain when container is deleted
 	if r.estChain == nil {
 		r.estChain = r.chain
 	}
