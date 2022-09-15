@@ -47,7 +47,6 @@ type ruleManager struct {
 
 	db        *database.DB
 	dockerCli *client.Client
-	nfc       *nftables.Conn
 
 	chain            *nftables.Chain
 	containerAddrSet *nftables.Set
@@ -179,11 +178,6 @@ func (r *ruleManager) init(ctx context.Context, dbFile string) error {
 	if err != nil {
 		return fmt.Errorf("error creating docker client: %w", err)
 	}
-	c, err := nftables.New() // TODO: fix GetRules bug and make lasting
-	if err != nil {
-		return fmt.Errorf("error creating netlink connection: %w", err)
-	}
-	r.nfc = c
 
 	return nil
 }

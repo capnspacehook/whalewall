@@ -24,7 +24,12 @@ func (r *ruleManager) createBaseRules() error {
 		Family: nftables.TableFamilyIPv4,
 	}
 
-	chains, err := r.nfc.ListChainsOfTableFamily(nftables.TableFamilyIPv4)
+	nfc, err := nftables.New()
+	if err != nil {
+		return fmt.Errorf("error creating netlink connection: %w", err)
+	}
+
+	chains, err := nfc.ListChainsOfTableFamily(nftables.TableFamilyIPv4)
 	if err != nil {
 		return fmt.Errorf("error listing IPv4 chains: %w", err)
 	}
@@ -57,14 +62,14 @@ func (r *ruleManager) createBaseRules() error {
 	var mainChainRules []*nftables.Rule
 	var addContainerJumpRules bool
 	if r.chain == nil {
-		r.chain = r.nfc.AddChain(&nftables.Chain{
+		r.chain = nfc.AddChain(&nftables.Chain{
 			Name:  mainChainName,
 			Table: filterTable,
 			Type:  nftables.ChainTypeFilter,
 		})
 		addContainerJumpRules = true
 	} else {
-		mainChainRules, err = r.nfc.GetRules(filterTable, r.chain)
+		mainChainRules, err = nfc.GetRules(filterTable, r.chain)
 		if err != nil {
 			return fmt.Errorf("error listing rules of %q chain: %w", mainChainName, err)
 		}
@@ -74,7 +79,7 @@ func (r *ruleManager) createBaseRules() error {
 	}
 
 	// add rule to jump from DOCKER-USER chain to whalewall chain
-	dockerRules, err := r.nfc.GetRules(filterTable, dockerChain)
+	dockerRules, err := nfc.GetRules(filterTable, dockerChain)
 	if err != nil {
 		return fmt.Errorf("error listing rules of %q chain: %w", dockerChainName, err)
 	}
@@ -90,7 +95,7 @@ func (r *ruleManager) createBaseRules() error {
 		},
 	}
 	if !findRule(r.logger, jumpRule, dockerRules) {
-		r.nfc.InsertRule(jumpRule)
+		nfc.InsertRule(jumpRule)
 	}
 
 	// add rule to jump from INPUT/OUTPUT chains to whalewall chain
@@ -106,16 +111,16 @@ func (r *ruleManager) createBaseRules() error {
 				Type:     nftables.ChainTypeFilter,
 				Policy:   ref(nftables.ChainPolicyAccept),
 			}
-			r.nfc.AddChain(mainChain)
+			nfc.AddChain(mainChain)
 		}
 
-		rules, err := r.nfc.GetRules(filterTable, mainChain)
+		rules, err := nfc.GetRules(filterTable, mainChain)
 		if err != nil {
 			return fmt.Errorf("error listing rules of %q chain: %w", name, err)
 		}
 		jumpRule.Chain = mainChain
 		if !findRule(r.logger, jumpRule, rules) {
-			r.nfc.InsertRule(jumpRule)
+			nfc.InsertRule(jumpRule)
 		}
 
 		return nil
@@ -135,7 +140,7 @@ func (r *ruleManager) createBaseRules() error {
 		KeyType:  nftables.TypeIPAddr,
 		DataType: nftables.TypeVerdict,
 	}
-	if err := r.nfc.AddSet(r.containerAddrSet, nil); err != nil {
+	if err := nfc.AddSet(r.containerAddrSet, nil); err != nil {
 		return fmt.Errorf("error adding set %q: %w", r.containerAddrSet.Name, err)
 	}
 
@@ -162,7 +167,7 @@ func (r *ruleManager) createBaseRules() error {
 		},
 	}
 	if addContainerJumpRules || !findRule(r.logger, srcJumpRule, mainChainRules) {
-		r.nfc.AddRule(srcJumpRule)
+		nfc.AddRule(srcJumpRule)
 	}
 	dstJumpRule := &nftables.Rule{
 		Table: filterTable,
@@ -186,10 +191,10 @@ func (r *ruleManager) createBaseRules() error {
 		},
 	}
 	if addContainerJumpRules || !findRule(r.logger, dstJumpRule, mainChainRules) {
-		r.nfc.AddRule(dstJumpRule)
+		nfc.AddRule(dstJumpRule)
 	}
 
-	if err := r.nfc.Flush(); err != nil {
+	if err := nfc.Flush(); err != nil {
 		return fmt.Errorf("error flushing nftables commands: %w", err)
 	}
 
