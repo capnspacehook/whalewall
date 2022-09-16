@@ -475,7 +475,11 @@ func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types
 				}
 			}
 
-			if mappedPortsCfg.External.Allow {
+			// if there are no host ports mapped to the container port,
+			// don't create allow rules as the port wasn't exposed by
+			// the user but rather was created from an EXPOSE Dockerfile
+			// directive
+			if mappedPortsCfg.External.Allow && len(hostPorts) > 0 {
 				// create rules to allow external traffic to container
 				rule := ruleDetails{
 					inbound: true,
