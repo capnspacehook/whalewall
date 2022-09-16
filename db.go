@@ -37,7 +37,7 @@ func (r *ruleManager) addContainer(ctx context.Context, logger *zap.Logger, id, 
 	// add names the container may have been referred to in user rules
 	// so when creating rules that specify this container it can be found
 	aliases := []string{"/" + name}
-	if service != "" {
+	if service != "" && service != name {
 		aliases = append(aliases, service)
 		aliases = append(aliases, "/"+service)
 	}
