@@ -108,7 +108,7 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 	// traffic to/from the container will be added
 	estContainers := make(map[string]struct{})
 	if configExists {
-		if err := r.validateRuleNetworks(ctx, rulesCfg, project, addrs, estContainers); err != nil {
+		if err := r.populateOutputRules(ctx, rulesCfg, project, addrs, estContainers); err != nil {
 			return fmt.Errorf("error validating rules: %w", err)
 		}
 
@@ -203,7 +203,7 @@ func stripName(name string) string {
 	return name
 }
 
-func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, project string, addrs map[string][]byte, estContainers map[string]struct{}) error {
+func (r *ruleManager) populateOutputRules(ctx context.Context, cfg config, project string, addrs map[string][]byte, estContainers map[string]struct{}) error {
 	var listedConts []types.Container
 	var err error
 
@@ -220,6 +220,39 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, proj
 	}
 
 	containers := make(map[string]types.ContainerJSON)
+	addContainerAddrToRule := func(cont types.Container, ruleIdx int, cfg config) error {
+		ruleCfg := cfg.Output[ruleIdx]
+		estContainers[cont.ID] = struct{}{}
+
+		container, ok := containers[ruleCfg.Container]
+		if !ok {
+			container, err = r.dockerCli.ContainerInspect(ctx, cont.ID)
+			if err != nil {
+				return fmt.Errorf("error inspecting container %s: %w", ruleCfg.Container, err)
+			}
+			containers[ruleCfg.Container] = container
+		}
+
+		netName, network, ok := findNetwork(ruleCfg.Network, project, container.NetworkSettings.Networks)
+		if !ok {
+			return fmt.Errorf("output rule #%d: network %q not found for container %q",
+				ruleIdx,
+				ruleCfg.Network,
+				ruleCfg.Container,
+			)
+		}
+
+		addr, err := netip.ParseAddr(network.IPAddress)
+		if err != nil {
+			return fmt.Errorf("error parsing IP of container %q from network %q: %w", ruleCfg.Container, netName, err)
+		}
+		cfg.Output[ruleIdx].IP = addrOrRange{
+			addr: addr,
+		}
+
+		return nil
+	}
+
 	for i, ruleCfg := range cfg.Output {
 		// ensure the specified network exist
 		if ruleCfg.Network != "" {
@@ -239,33 +272,12 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, proj
 				if !containerNameMatches(ruleCfg.Container, listedCont.Labels, listedCont.Names...) {
 					continue
 				}
-				estContainers[listedCont.ID] = struct{}{}
 				found = true
 
-				container, ok := containers[ruleCfg.Container]
-				if !ok {
-					container, err = r.dockerCli.ContainerInspect(ctx, listedCont.ID)
-					if err != nil {
-						return fmt.Errorf("error inspecting container %s: %w", ruleCfg.Container, err)
-					}
-					containers[ruleCfg.Container] = container
-				}
-
-				netName, network, ok := findNetwork(ruleCfg.Network, project, container.NetworkSettings.Networks)
-				if !ok {
-					return fmt.Errorf("output rule #%d: network %q not found for container %q",
-						i,
-						ruleCfg.Network,
-						ruleCfg.Container,
-					)
-				}
-
-				addr, err := netip.ParseAddr(network.IPAddress)
-				if err != nil {
-					return fmt.Errorf("error parsing IP of container %q from network %q: %w", ruleCfg.Container, netName, err)
-				}
-				cfg.Output[i].IP = addrOrRange{
-					addr: addr,
+				// add the specified container's address on the specified
+				// network to the rule
+				if err := addContainerAddrToRule(listedCont, i, cfg); err != nil {
+					return err
 				}
 				break
 			}
@@ -293,7 +305,11 @@ func (r *ruleManager) validateRuleNetworks(ctx context.Context, cfg config, proj
 				// add container to list of established containers
 				for _, listedCont := range listedConts {
 					if containerNameMatches(ruleCfg.Container, listedCont.Labels, listedCont.Names...) {
-						estContainers[listedCont.ID] = struct{}{}
+						// add the specified container's address on the specified
+						// network to the rule
+						if err := addContainerAddrToRule(listedCont, i, cfg); err != nil {
+							return err
+						}
 						break
 					}
 				}
