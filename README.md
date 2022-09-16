@@ -1,53 +1,19 @@
 # whalewall
 
-Example:
+Easily mange firewall rules for docker containers.
 
-```yaml
-version: "3"
+## Requirements
 
-services:
-  nginx1:
-    container_name: nginx1
-    depends_on:
-      - nginx2
-    image: nginx:alpine
-    labels:
-      whalewall.enabled: true
-      whalewall.rules: |
-        mapped_ports:
-          external:
-            # allow Tailscale traffic to mapped ports
-            allow: true
-            ip: "100.64.0.0/10"
-        output:
-          # allow DNS and HTTPS outbound
-          - ip: "172.17.0.1"
-            proto: udp
-            port: 53
-          - proto: tcp
-            port: 443
-          # allow querying nginx2
-          - network: test_net2
-            container: nginx2
-            proto: tcp
-            port: 1337
-    networks:
-        test_net1:
-        test_net2:
-    ports:
-      - 8080:80
+Linux with a recent kernel, around 5.10 or newer. Tested with nftables v1.0.2 and Docker 20.10.18,
+though I'm sure some older versions of both will work with Whalewall.
 
-  nginx2:
-    container_name: nginx2
-    environment:
-      - NGINX_PORT=1337
-    image: nginx:alpine
-    labels:
-      whalewall.enabled: true
-    networks:
-        test_net2:
+## Purpose
 
-networks:
-    test_net1:
-    test_net2:
-```
+Docker by default creates iptables rules to handle container traffic that override any user-set
+rules. 
+
+## Configuration
+
+## Tips
+
+## Examples
