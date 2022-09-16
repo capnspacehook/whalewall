@@ -21,17 +21,20 @@ type mappedPorts struct {
 
 // TODO: allow users to specify addrOrRange that is within 127.0.0.1/8?
 type localRules struct {
-	Allow   bool
-	Verdict verdict
+	Allow     bool
+	LogPrefix string `yaml:"log_prefix"`
+	Verdict   verdict
 }
 
 type externalRules struct {
-	Allow   bool
-	IP      addrOrRange
-	Verdict verdict
+	Allow     bool
+	LogPrefix string `yaml:"log_prefix"`
+	IP        addrOrRange
+	Verdict   verdict
 }
 
 type ruleConfig struct {
+	LogPrefix string `yaml:"log_prefix"`
 	Network   string
 	IP        addrOrRange
 	Container string

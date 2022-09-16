@@ -124,14 +124,14 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 		}
 
 		// handle outbound rules
-		nftRules, err = r.createOutputRules(ctx, rulesCfg.Output, project, addrs, chain, container.ID, nftRules)
+		nftRules, err = r.createOutputRules(ctx, rulesCfg.Output, project, addrs, chain, contName, container.ID, nftRules)
 		if err != nil {
 			return fmt.Errorf("error creating output rules: %w", err)
 		}
 	}
 
 	// create rule to drop all not explicitly allowed traffic
-	logPrefix := strings.ToUpper(contChainName) + " DROP: "
+	logPrefix := contChainName + " drop: "
 	nftRules = append(nftRules,
 		&nftables.Rule{
 			Table: chain.Table,
@@ -403,6 +403,14 @@ func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types
 		return nftRules, nil, nil
 	}
 
+	// prepend container name and ID to log prefixes
+	if mappedPortsCfg.Localhost.LogPrefix != "" {
+		mappedPortsCfg.Localhost.LogPrefix = formatLogPrefix(mappedPortsCfg.Localhost.LogPrefix, contName, container.ID)
+	}
+	if mappedPortsCfg.External.LogPrefix != "" {
+		mappedPortsCfg.External.LogPrefix = formatLogPrefix(mappedPortsCfg.External.LogPrefix, contName, container.ID)
+	}
+
 	hostPortRules := make(map[uint16][]*nftables.Rule)
 	for netName, netSettings := range container.NetworkSettings.Networks {
 		gateway, err := netip.ParseAddr(netSettings.Gateway)
@@ -450,6 +458,7 @@ func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types
 						inbound: true,
 						addr:    addrs[netName],
 						cfg: ruleConfig{
+							LogPrefix: mappedPortsCfg.Localhost.LogPrefix,
 							IP: addrOrRange{
 								addr: gateway,
 							},
@@ -472,10 +481,11 @@ func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types
 					inbound: true,
 					addr:    addrs[netName],
 					cfg: ruleConfig{
-						IP:      mappedPortsCfg.External.IP,
-						Proto:   port.Proto(),
-						Port:    uint16(port.Int()),
-						Verdict: mappedPortsCfg.External.Verdict,
+						LogPrefix: mappedPortsCfg.External.LogPrefix,
+						IP:        mappedPortsCfg.External.IP,
+						Proto:     port.Proto(),
+						Port:      uint16(port.Int()),
+						Verdict:   mappedPortsCfg.External.Verdict,
 					},
 					chain:  chain,
 					contID: container.ID,
@@ -495,13 +505,18 @@ func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types
 	return nftRules, hostRules, nil
 }
 
-func (r *ruleManager) createOutputRules(ctx context.Context, ruleCfgs []ruleConfig, project string, addrs map[string][]byte, chain *nftables.Chain, condID string, nftRules []*nftables.Rule) ([]*nftables.Rule, error) {
+func (r *ruleManager) createOutputRules(ctx context.Context, ruleCfgs []ruleConfig, project string, addrs map[string][]byte, chain *nftables.Chain, name, id string, nftRules []*nftables.Rule) ([]*nftables.Rule, error) {
 	for _, ruleCfg := range ruleCfgs {
+		// prepend container name and ID to log prefixes
+		if ruleCfg.LogPrefix != "" {
+			ruleCfg.LogPrefix = formatLogPrefix(ruleCfg.LogPrefix, name, id)
+		}
+
 		rule := ruleDetails{
 			inbound: false,
 			cfg:     ruleCfg,
 			chain:   chain,
-			contID:  condID,
+			contID:  id,
 		}
 
 		if ruleCfg.Network != "" {
@@ -572,6 +587,15 @@ func (r *ruleManager) getContainerIDAndName(ctx context.Context, contName string
 	return id, name, nil
 }
 
+func formatLogPrefix(prefix, name, id string) string {
+	prefix = fmt.Sprintf("whalewall-%s-%s %s", name, id[:12], prefix)
+	if !strings.HasSuffix(prefix, ": ") {
+		prefix += ": "
+	}
+
+	return prefix
+}
+
 type ruleDetails struct {
 	inbound  bool
 	addr     []byte
@@ -588,57 +612,67 @@ func createNFTRules(r ruleDetails) []*nftables.Rule {
 	}
 
 	if r.cfg.Verdict.Queue == 0 {
+		if r.cfg.LogPrefix == "" {
+			return append(rules,
+				createNFTRule(r.inbound, dstPortOffset, stateNewEst, r.addr, r.cfg, 0, r.chain, r.contID),
+				createNFTRule(!r.inbound, srcPortOffset, stateEst, r.addr, r.cfg, 0, r.estChain, r.contID),
+			)
+		}
+		// create a separate rule for new traffic to log it
 		return append(rules,
-			createNFTRule(r.inbound, stateNewEst, r.addr, r.cfg, 0, r.chain, r.contID),
-			createNFTRule(!r.inbound, stateEst, r.addr, r.cfg, 0, r.estChain, r.contID),
+			createNFTRule(r.inbound, dstPortOffset, stateNew, r.addr, r.cfg, 0, r.chain, r.contID),
+			createNFTRule(r.inbound, dstPortOffset, stateEst, r.addr, r.cfg, 0, r.chain, r.contID),
+			createNFTRule(!r.inbound, srcPortOffset, stateEst, r.addr, r.cfg, 0, r.estChain, r.contID),
 		)
 	}
 
-	if r.inbound && r.cfg.Verdict.Queue == r.cfg.Verdict.InputEstQueue {
-		// if rule is inbound and queue and established inbound queue
-		// are the same, create one rule for inbound traffic
-		rules = append(rules,
-			createNFTRule(true, stateNewEst, r.addr, r.cfg, r.cfg.Verdict.Queue, r.chain, r.contID),
-			createNFTRule(false, stateEst, r.addr, r.cfg, r.cfg.Verdict.OutputEstQueue, r.estChain, r.contID),
-		)
-	} else if !r.inbound && r.cfg.Verdict.Queue == r.cfg.Verdict.OutputEstQueue {
-		// if rule is outbound and queue and established outbound queue
-		// are the same, create one rule for outbound traffic
-		rules = append(rules,
-			createNFTRule(false, stateNewEst, r.addr, r.cfg, r.cfg.Verdict.Queue, r.chain, r.contID),
-			createNFTRule(true, stateEst, r.addr, r.cfg, r.cfg.Verdict.InputEstQueue, r.estChain, r.contID),
-		)
+	if r.cfg.LogPrefix == "" {
+		if r.inbound && r.cfg.Verdict.Queue == r.cfg.Verdict.InputEstQueue {
+			// if rule is inbound and queue and established inbound queue
+			// are the same, create one rule for inbound traffic
+			rules = append(rules,
+				createNFTRule(true, dstPortOffset, stateNewEst, r.addr, r.cfg, r.cfg.Verdict.Queue, r.chain, r.contID),
+				createNFTRule(false, srcPortOffset, stateEst, r.addr, r.cfg, r.cfg.Verdict.OutputEstQueue, r.estChain, r.contID),
+			)
+		} else if !r.inbound && r.cfg.Verdict.Queue == r.cfg.Verdict.OutputEstQueue {
+			// if rule is outbound and queue and established outbound queue
+			// are the same, create one rule for outbound traffic
+			rules = append(rules,
+				createNFTRule(false, dstPortOffset, stateNewEst, r.addr, r.cfg, r.cfg.Verdict.Queue, r.chain, r.contID),
+				createNFTRule(true, srcPortOffset, stateEst, r.addr, r.cfg, r.cfg.Verdict.InputEstQueue, r.estChain, r.contID),
+			)
+		}
 	} else if r.inbound {
 		// if rule is inbound and queue and established inbound queue
-		// are different, need to create separate rules for them
+		// are different, need to create separate rules for them;
+		// or, logging was requested which means we need to create a
+		// separate rule for new traffic
 		rules = append(rules,
-			createNFTRule(true, stateNew, r.addr, r.cfg, r.cfg.Verdict.Queue, r.chain, r.contID),
-			createNFTRule(true, stateEst, r.addr, r.cfg, r.cfg.Verdict.InputEstQueue, r.chain, r.contID),
-			createNFTRule(false, stateEst, r.addr, r.cfg, r.cfg.Verdict.OutputEstQueue, r.estChain, r.contID),
+			createNFTRule(true, dstPortOffset, stateNew, r.addr, r.cfg, r.cfg.Verdict.Queue, r.chain, r.contID),
+			createNFTRule(true, dstPortOffset, stateEst, r.addr, r.cfg, r.cfg.Verdict.InputEstQueue, r.chain, r.contID),
+			createNFTRule(false, srcPortOffset, stateEst, r.addr, r.cfg, r.cfg.Verdict.OutputEstQueue, r.estChain, r.contID),
 		)
 	} else if !r.inbound {
 		// if rule is outbound and queue and established outbound queue
-		// are different, need to create separate rules for them
+		// are different, need to create separate rules for them;
+		// or, logging was requested which means we need to create a
+		// separate rule for new traffic
 		rules = append(rules,
-			createNFTRule(false, stateNew, r.addr, r.cfg, r.cfg.Verdict.Queue, r.chain, r.contID),
-			createNFTRule(false, stateEst, r.addr, r.cfg, r.cfg.Verdict.OutputEstQueue, r.chain, r.contID),
-			createNFTRule(true, stateEst, r.addr, r.cfg, r.cfg.Verdict.InputEstQueue, r.estChain, r.contID),
+			createNFTRule(false, dstPortOffset, stateNew, r.addr, r.cfg, r.cfg.Verdict.Queue, r.chain, r.contID),
+			createNFTRule(false, dstPortOffset, stateEst, r.addr, r.cfg, r.cfg.Verdict.OutputEstQueue, r.chain, r.contID),
+			createNFTRule(true, srcPortOffset, stateEst, r.addr, r.cfg, r.cfg.Verdict.InputEstQueue, r.estChain, r.contID),
 		)
 	}
 
 	return rules
 }
 
-func createNFTRule(inbound bool, state uint32, addr []byte, cfg ruleConfig, queueNum uint16, chain *nftables.Chain, contID string) *nftables.Rule {
+func createNFTRule(inbound bool, portOffset, state uint32, addr []byte, cfg ruleConfig, queueNum uint16, chain *nftables.Chain, contID string) *nftables.Rule {
 	addrOffset := srcAddrOffset
 	cfgAddrOffset := dstAddrOffset
-	portOffset := srcPortOffset
 	if inbound {
 		addrOffset = dstAddrOffset
 		cfgAddrOffset = srcAddrOffset
-	}
-	if state&stateNew != 0 {
-		portOffset = dstPortOffset
 	}
 	proto := unix.IPPROTO_TCP
 	if cfg.Proto == "udp" {
@@ -723,7 +757,7 @@ func createNFTRule(inbound bool, state uint32, addr []byte, cfg ruleConfig, queu
 				OperationType: expr.PayloadLoad,
 				Len:           2,
 				Base:          expr.PayloadBaseTransportHeader,
-				Offset:        uint32(portOffset),
+				Offset:        portOffset,
 				DestRegister:  1,
 			},
 			// [ cmp eq reg 1 ... ]
@@ -756,6 +790,15 @@ func createNFTRule(inbound bool, state uint32, addr []byte, cfg ruleConfig, queu
 		},
 		&expr.Counter{},
 	)
+	if state == stateNew && cfg.LogPrefix != "" {
+		exprs = append(exprs,
+			&expr.Log{
+				Key:   (1 << unix.NFTA_LOG_PREFIX) | (1 << unix.NFTA_LOG_LEVEL),
+				Level: expr.LogLevelInfo,
+				Data:  []byte(cfg.LogPrefix),
+			},
+		)
+	}
 	if cfg.Verdict.Chain != "" {
 		exprs = append(exprs,
 			&expr.Verdict{
