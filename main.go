@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"log"
+	"os"
 	"os/signal"
 	"syscall"
 
@@ -12,19 +13,26 @@ import (
 )
 
 var (
-	dataDir   string
-	debugLogs bool
-	logPath   string
+	dataDir        string
+	debugLogs      bool
+	logPath        string
+	displayVersion bool
 )
 
 func init() {
 	flag.StringVar(&dataDir, "d", ".", "directory to store state in")
 	flag.BoolVar(&debugLogs, "debug", false, "enable debug logging")
 	flag.StringVar(&logPath, "l", "stdout", "path to log to")
+	flag.BoolVar(&displayVersion, "version", false, "print version and build information and exit")
 }
 
 func main() {
 	flag.Parse()
+
+	if displayVersion {
+		printVersionInfo()
+		os.Exit(0)
+	}
 
 	logCfg := zap.NewProductionConfig()
 	logCfg.OutputPaths = []string{logPath}
