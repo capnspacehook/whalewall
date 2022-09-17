@@ -29,7 +29,7 @@ are created or killed, which would be very tedious and error-prone manually.
 
 ## Mechanism
 
-Whalewall listens for Docker container `create` and `kill` events and creates or deletes nftables
+Whalewall listens for Docker container `start` and `kill` events and creates or deletes nftables
 rules appropriately. Why is nftables used instead of iptables? A few reasons:
 
 - nftables can be configured programmatically unlike iptables, removing the need for whalewall to
