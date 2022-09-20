@@ -13,7 +13,7 @@ jobs:
       run: |
         echo "GIT_TAG=$(git tag --sort=-version:refname | head -n 1)" >> $GITHUB_ENV
 
-    - uses: wangyoucao577/go-release-action@v1.30
+    - uses: wangyoucao577/go-release-action@v1.31
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         goos: linux
