@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	dbFile     = "db.sqlite"
+	dbFilename = "db.sqlite"
 	dbCommands = `
 PRAGMA busy_timeout = 1000;
 PRAGMA journal_mode=WAL;
@@ -62,7 +62,7 @@ func newRuleManager(logger *zap.Logger) *ruleManager {
 }
 
 func (r *ruleManager) start(ctx context.Context, dataDir string) error {
-	if err := r.init(ctx, filepath.Join(dataDir, dbFile)); err != nil {
+	if err := r.init(ctx, dataDir); err != nil {
 		return err
 	}
 	if err := r.createBaseRules(); err != nil {
@@ -147,9 +147,27 @@ func (r *ruleManager) start(ctx context.Context, dataDir string) error {
 	return nil
 }
 
-func (r *ruleManager) init(ctx context.Context, dbFile string) error {
+func (r *ruleManager) init(ctx context.Context, dataDir string) error {
+	// create data directory if it doesn't exist
+	dataDir, err := filepath.Abs(dataDir)
+	if err != nil {
+		return err
+	}
+	_, err = os.Stat(dataDir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			r.logger.Info("creating data directory", zap.String("data.dir", dataDir))
+			if err := os.MkdirAll(dataDir, 0750); err != nil {
+				return fmt.Errorf("error creating data directory: %w", err)
+			}
+		} else {
+			return err
+		}
+	}
+	dbFile := filepath.Join(dataDir, dbFilename)
+
 	var dbNotExist bool
-	_, err := os.Stat(dbFile)
+	_, err = os.Stat(dbFile)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			dbNotExist = true
