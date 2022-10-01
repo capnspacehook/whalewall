@@ -16,9 +16,6 @@ func printVersionInfo() {
 		log.Fatal("build information not found")
 	}
 
-	if version == "" {
-		version = "devel"
-	}
 	fmt.Printf("Whalewall %s\n\n", version)
 
 	fmt.Print("Build Information:\n\n")

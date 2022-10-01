@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 
 	"go.uber.org/zap"
@@ -29,11 +30,15 @@ func init() {
 func main() {
 	flag.Parse()
 
+	if version == "" {
+		version = "devel"
+	}
 	if displayVersion {
 		printVersionInfo()
 		os.Exit(0)
 	}
 
+	// build logger
 	logCfg := zap.NewProductionConfig()
 	logCfg.OutputPaths = []string{logPath}
 	if debugLogs {
@@ -48,11 +53,27 @@ func main() {
 		log.Fatalf("error creating logger: %v", err)
 	}
 
+	// log current version/commit
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		logger.Fatal("build information not found")
+	}
+	versionFields := []zap.Field{
+		zap.String("version", version),
+	}
+	for _, buildSetting := range info.Settings {
+		if buildSetting.Key == "vcs.revision" {
+			versionFields = append(versionFields, zap.String("commit", buildSetting.Value))
+			break
+		}
+	}
+	logger.Info("starting whalewall", versionFields...)
+
+	// start managing firewall rules
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
 	r := newRuleManager(logger)
-	logger.Info("starting whalewall")
 	if err = r.start(ctx, dataDir); err != nil {
 		logger.Fatal("error starting", zap.Error(err))
 	}
