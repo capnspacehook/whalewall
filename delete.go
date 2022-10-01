@@ -48,7 +48,7 @@ func (r *ruleManager) deleteContainerRules(ctx context.Context, id, name string)
 	for _, addr := range addrs {
 		e := []nftables.SetElement{{Key: addr}}
 		if err := nfc.SetDeleteElements(r.containerAddrSet, e); err != nil {
-			logger.Error("error marshalling set elements", zap.Error(err))
+			logger.Error("error marshaling set elements", zap.Error(err))
 			continue
 		}
 		// flush after every element deletion to ensure all possible
@@ -102,7 +102,10 @@ func deleteRulesOfChain(logger *zap.Logger, nfc *nftables.Conn, rules []*nftable
 			continue
 		}
 
-		nfc.DelRule(rule)
+		if err := nfc.DelRule(rule); err != nil {
+			logger.Error("error deleting rule", zap.Error(err))
+			continue
+		}
 		// flush after every rule deletion to ensure all possible
 		// rules are deleted
 		err := nfc.Flush()

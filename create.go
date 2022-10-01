@@ -41,6 +41,7 @@ const (
 var (
 	errShuttingDown = errors.New("shutting down")
 	localAddr       = netip.MustParseAddr("127.0.0.1")
+	zeroUint32      = []byte{0, 0, 0, 0}
 )
 
 func (r *ruleManager) createRules(ctx context.Context) {
@@ -646,7 +647,8 @@ func createNFTRules(r ruleDetails) []*nftables.Rule {
 		)
 	}
 
-	if r.cfg.LogPrefix == "" {
+	switch {
+	case r.cfg.LogPrefix == "":
 		if r.inbound && r.cfg.Verdict.Queue == r.cfg.Verdict.InputEstQueue {
 			// if rule is inbound and queue and established inbound queue
 			// are the same, create one rule for inbound traffic
@@ -662,7 +664,7 @@ func createNFTRules(r ruleDetails) []*nftables.Rule {
 				createNFTRule(true, srcPortOffset, stateEst, r.addr, r.cfg, r.cfg.Verdict.InputEstQueue, r.estChain, r.contID),
 			)
 		}
-	} else if r.inbound {
+	case r.inbound:
 		// if rule is inbound and queue and established inbound queue
 		// are different, need to create separate rules for them;
 		// or, logging was requested which means we need to create a
@@ -672,7 +674,7 @@ func createNFTRules(r ruleDetails) []*nftables.Rule {
 			createNFTRule(true, dstPortOffset, stateEst, r.addr, r.cfg, r.cfg.Verdict.InputEstQueue, r.chain, r.contID),
 			createNFTRule(false, srcPortOffset, stateEst, r.addr, r.cfg, r.cfg.Verdict.OutputEstQueue, r.estChain, r.contID),
 		)
-	} else if !r.inbound {
+	case !r.inbound:
 		// if rule is outbound and queue and established outbound queue
 		// are different, need to create separate rules for them;
 		// or, logging was requested which means we need to create a
@@ -800,13 +802,13 @@ func createNFTRule(inbound bool, portOffset, state uint32, addr []byte, cfg rule
 			DestRegister:   1,
 			Len:            4,
 			Mask:           binary.LittleEndian.AppendUint32(nil, state),
-			Xor:            []byte{0, 0, 0, 0},
+			Xor:            zeroUint32,
 		},
 		// [ cmp neq reg 1 0x00000000 ]
 		&expr.Cmp{
 			Op:       expr.CmpOpNeq,
 			Register: 1,
-			Data:     []byte{0, 0, 0, 0},
+			Data:     zeroUint32,
 		},
 		&expr.Counter{},
 	)
@@ -819,20 +821,21 @@ func createNFTRule(inbound bool, portOffset, state uint32, addr []byte, cfg rule
 			},
 		)
 	}
-	if cfg.Verdict.Chain != "" {
+	switch {
+	case cfg.Verdict.Chain != "":
 		exprs = append(exprs,
 			&expr.Verdict{
 				Kind:  expr.VerdictJump,
 				Chain: cfg.Verdict.Chain,
 			},
 		)
-	} else if queueNum != 0 {
+	case queueNum != 0:
 		exprs = append(exprs,
 			&expr.Queue{
 				Num: queueNum,
 			},
 		)
-	} else {
+	default:
 		exprs = append(exprs,
 			&expr.Verdict{
 				Kind: expr.VerdictAccept,

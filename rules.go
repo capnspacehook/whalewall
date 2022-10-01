@@ -40,12 +40,12 @@ func rulesEqual(logger *zap.Logger, r1, r2 *nftables.Rule) bool {
 
 		exprb1, err := expr.Marshal(byte(r1.Table.Family), r1.Exprs[i])
 		if err != nil {
-			logger.Error("error marshalling rule", zap.Error(err))
+			logger.Error("error marshaling rule", zap.Error(err))
 			continue
 		}
 		exprb2, err := expr.Marshal(byte(r2.Table.Family), r2.Exprs[i])
 		if err != nil {
-			logger.Error("error marshalling rule", zap.Error(err))
+			logger.Error("error marshaling rule", zap.Error(err))
 			continue
 		}
 		if !bytes.Equal(exprb1, exprb2) {

@@ -1,0 +1,35 @@
+issues:
+  max-same-issues: 0
+  max-issues-per-linter: 0
+
+linters:
+  disable-all: true
+  enable:
+    - asasalint
+    - bidichk
+    - durationcheck
+    - errcheck
+    - errorlint
+    - forcetypeassert
+    - gocritic
+    - goimports
+    - gosimple
+    - govet
+    - ineffassign
+    - misspell
+    - nilerr
+    - nilnil
+    - prealloc
+    - reassign
+    - revive
+    - unconvert
+    - unparam
+    - unused
+    - usestdlibvars
+
+linters-settings:
+  misspell:
+    locale: US
+
+run:
+  timeout: 5m
