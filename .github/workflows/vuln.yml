@@ -1,0 +1,23 @@
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+name: Vuln
+jobs:
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-go@v3
+        with:
+          go-version: 1.19.x
+
+      - uses: actions/checkout@v3
+
+      - uses: florianl/govulncheck-action@v0.0.3
+        with:
+          install-go: false
+          govulncheck-verbose: true
