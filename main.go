@@ -30,11 +30,16 @@ func init() {
 func main() {
 	flag.Parse()
 
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		log.Fatal("build information not found")
+	}
+
 	if version == "" {
 		version = "devel"
 	}
 	if displayVersion {
-		printVersionInfo()
+		printVersionInfo(info)
 		os.Exit(0)
 	}
 
@@ -54,10 +59,6 @@ func main() {
 	}
 
 	// log current version/commit
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		logger.Fatal("build information not found")
-	}
 	versionFields := []zap.Field{
 		zap.String("version", version),
 	}

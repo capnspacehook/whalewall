@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"runtime/debug"
 	"text/tabwriter"
@@ -10,12 +9,7 @@ import (
 
 var version string
 
-func printVersionInfo() {
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		log.Fatal("build information not found")
-	}
-
+func printVersionInfo(info *debug.BuildInfo) {
 	fmt.Printf("Whalewall %s\n\n", version)
 
 	fmt.Print("Build Information:\n\n")
