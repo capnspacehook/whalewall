@@ -141,11 +141,7 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 			Chain: chain,
 			Exprs: []expr.Any{
 				&expr.Counter{},
-				&expr.Log{
-					Key:   (1 << unix.NFTA_LOG_PREFIX) | (1 << unix.NFTA_LOG_LEVEL),
-					Level: expr.LogLevelInfo,
-					Data:  []byte(logPrefix),
-				},
+				logExpr(logPrefix),
 				&expr.Verdict{
 					Kind: expr.VerdictDrop,
 				},
@@ -207,19 +203,17 @@ func stripName(name string) string {
 }
 
 func (r *ruleManager) populateOutputRules(ctx context.Context, cfg config, project string, addrs map[string][]byte, estContainers map[string]struct{}) error {
-	var listedConts []types.Container
-	var err error
-
 	// only get a list of containers if at least one rule specifies a
 	// container
 	i := slices.IndexFunc(cfg.Output, func(r ruleConfig) bool {
 		return r.Container != ""
 	})
-	if i != -1 {
-		listedConts, err = r.dockerCli.ContainerList(ctx, types.ContainerListOptions{})
-		if err != nil {
-			return fmt.Errorf("error listing running containers: %w", err)
-		}
+	if i == -1 {
+		return nil
+	}
+	listedConts, err := r.dockerCli.ContainerList(ctx, types.ContainerListOptions{})
+	if err != nil {
+		return fmt.Errorf("error listing running containers: %w", err)
 	}
 
 	containers := make(map[string]types.ContainerJSON)
@@ -725,28 +719,7 @@ func createNFTRule(inbound bool, portOffset, state uint32, addr []byte, cfg rule
 			if len(addr) != 0 {
 				addrExprs = matchIPExprs(addr, addrOffset)
 			}
-			rangeExprs := []expr.Any{
-				// [ payload load 4b @ network header + ... => reg 1 ]
-				&expr.Payload{
-					OperationType: expr.PayloadLoad,
-					Len:           4,
-					Base:          expr.PayloadBaseNetworkHeader,
-					Offset:        uint32(cfgAddrOffset),
-					DestRegister:  1,
-				},
-				// [ cmp gte reg 1 ... ]
-				&expr.Cmp{
-					Op:       expr.CmpOpGte,
-					Register: 1,
-					Data:     ref(lowAddr.As4())[:],
-				},
-				// [ cmp lte reg 1 ... ]
-				&expr.Cmp{
-					Op:       expr.CmpOpLte,
-					Register: 1,
-					Data:     ref(highAddr.As4())[:],
-				},
-			}
+			rangeExprs := matchIPRangeExprs(lowAddr, highAddr, cfgAddrOffset)
 			if inbound {
 				exprs = append(exprs, rangeExprs...)
 				exprs = append(exprs, addrExprs...)
@@ -762,68 +735,15 @@ func createNFTRule(inbound bool, portOffset, state uint32, addr []byte, cfg rule
 		exprs = append(exprs, matchIPExprs(addr, addrOffset)...)
 	}
 	if cfg.Proto != "" {
-		exprs = append(exprs,
-			// [ meta load l4proto => reg 1 ]
-			&expr.Meta{
-				Key:      expr.MetaKeyL4PROTO,
-				Register: 1,
-			},
-			// [ cmp eq reg 1 ... ]
-			&expr.Cmp{
-				Op:       expr.CmpOpEq,
-				Register: 1,
-				Data:     []byte{byte(proto)},
-			},
-		)
+		exprs = append(exprs, matchProtoExprs(proto)...)
 	}
 	if cfg.Port != 0 {
-		exprs = append(exprs,
-			// [ payload load 2b @ transport header + ... => reg 1 ]
-			&expr.Payload{
-				OperationType: expr.PayloadLoad,
-				Len:           2,
-				Base:          expr.PayloadBaseTransportHeader,
-				Offset:        portOffset,
-				DestRegister:  1,
-			},
-			// [ cmp eq reg 1 ... ]
-			&expr.Cmp{
-				Op:       expr.CmpOpEq,
-				Register: 1,
-				Data:     binary.BigEndian.AppendUint16(nil, cfg.Port),
-			},
-		)
+		exprs = append(exprs, matchPortExprs(cfg.Port, portOffset)...)
 	}
-	exprs = append(exprs,
-		// [ ct load state => reg 1 ]
-		&expr.Ct{
-			Key:      expr.CtKeySTATE,
-			Register: 1,
-		},
-		// [ bitwise reg 1 = ( reg 1 & ... ) ^ 0x00000000 ]
-		&expr.Bitwise{
-			SourceRegister: 1,
-			DestRegister:   1,
-			Len:            4,
-			Mask:           binary.LittleEndian.AppendUint32(nil, state),
-			Xor:            zeroUint32,
-		},
-		// [ cmp neq reg 1 0x00000000 ]
-		&expr.Cmp{
-			Op:       expr.CmpOpNeq,
-			Register: 1,
-			Data:     zeroUint32,
-		},
-		&expr.Counter{},
-	)
+	exprs = append(exprs, matchConnStateExprs(state)...)
+	exprs = append(exprs, &expr.Counter{})
 	if state == stateNew && cfg.LogPrefix != "" {
-		exprs = append(exprs,
-			&expr.Log{
-				Key:   (1 << unix.NFTA_LOG_PREFIX) | (1 << unix.NFTA_LOG_LEVEL),
-				Level: expr.LogLevelInfo,
-				Data:  []byte(cfg.LogPrefix),
-			},
-		)
+		exprs = append(exprs, logExpr(cfg.LogPrefix))
 	}
 	switch {
 	case cfg.Verdict.Chain != "":
@@ -871,6 +791,98 @@ func matchIPExprs(addr []byte, offset int) []expr.Any {
 			Register: 1,
 			Data:     addr,
 		},
+	}
+}
+
+func matchIPRangeExprs(lowAddr, highAddr netip.Addr, offset int) []expr.Any {
+	return []expr.Any{
+		// [ payload load 4b @ network header + ... => reg 1 ]
+		&expr.Payload{
+			OperationType: expr.PayloadLoad,
+			Len:           4,
+			Base:          expr.PayloadBaseNetworkHeader,
+			Offset:        uint32(offset),
+			DestRegister:  1,
+		},
+		// [ cmp gte reg 1 ... ]
+		&expr.Cmp{
+			Op:       expr.CmpOpGte,
+			Register: 1,
+			Data:     ref(lowAddr.As4())[:],
+		},
+		// [ cmp lte reg 1 ... ]
+		&expr.Cmp{
+			Op:       expr.CmpOpLte,
+			Register: 1,
+			Data:     ref(highAddr.As4())[:],
+		},
+	}
+}
+
+func matchProtoExprs(proto int) []expr.Any {
+	return []expr.Any{
+		// [ meta load l4proto => reg 1 ]
+		&expr.Meta{
+			Key:      expr.MetaKeyL4PROTO,
+			Register: 1,
+		},
+		// [ cmp eq reg 1 ... ]
+		&expr.Cmp{
+			Op:       expr.CmpOpEq,
+			Register: 1,
+			Data:     []byte{byte(proto)},
+		},
+	}
+}
+
+func matchPortExprs(port uint16, offset uint32) []expr.Any {
+	return []expr.Any{
+		// [ payload load 2b @ transport header + ... => reg 1 ]
+		&expr.Payload{
+			OperationType: expr.PayloadLoad,
+			Len:           2,
+			Base:          expr.PayloadBaseTransportHeader,
+			Offset:        offset,
+			DestRegister:  1,
+		},
+		// [ cmp eq reg 1 ... ]
+		&expr.Cmp{
+			Op:       expr.CmpOpEq,
+			Register: 1,
+			Data:     binary.BigEndian.AppendUint16(nil, port),
+		},
+	}
+}
+
+func matchConnStateExprs(state uint32) []expr.Any {
+	return []expr.Any{
+		// [ ct load state => reg 1 ]
+		&expr.Ct{
+			Key:      expr.CtKeySTATE,
+			Register: 1,
+		},
+		// [ bitwise reg 1 = ( reg 1 & ... ) ^ 0x00000000 ]
+		&expr.Bitwise{
+			SourceRegister: 1,
+			DestRegister:   1,
+			Len:            4,
+			Mask:           binary.LittleEndian.AppendUint32(nil, state),
+			Xor:            zeroUint32,
+		},
+		// [ cmp neq reg 1 0x00000000 ]
+		&expr.Cmp{
+			Op:       expr.CmpOpNeq,
+			Register: 1,
+			Data:     zeroUint32,
+		},
+	}
+}
+
+func logExpr(prefix string) expr.Any {
+	return &expr.Log{
+		Key:   (1 << unix.NFTA_LOG_PREFIX) | (1 << unix.NFTA_LOG_LEVEL),
+		Level: expr.LogLevelInfo,
+		Data:  []byte(prefix),
 	}
 }
 
