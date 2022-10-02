@@ -647,46 +647,48 @@ func createNFTRules(r ruleDetails) []*nftables.Rule {
 		)
 	}
 
-	switch {
-	case r.cfg.LogPrefix == "":
+	// If there is no log prefix set we can create one inbound rule and
+	// one outbound rule in some situations. Otherwise new traffic must
+	// be logged.
+	if r.cfg.LogPrefix == "" {
 		if r.inbound && r.cfg.Verdict.Queue == r.cfg.Verdict.InputEstQueue {
 			// if rule is inbound and queue and established inbound queue
 			// are the same, create one rule for inbound traffic
-			rules = append(rules,
+			return append(rules,
 				createNFTRule(true, dstPortOffset, stateNewEst, r.addr, r.cfg, r.cfg.Verdict.Queue, r.chain, r.contID),
 				createNFTRule(false, srcPortOffset, stateEst, r.addr, r.cfg, r.cfg.Verdict.OutputEstQueue, r.estChain, r.contID),
 			)
 		} else if !r.inbound && r.cfg.Verdict.Queue == r.cfg.Verdict.OutputEstQueue {
 			// if rule is outbound and queue and established outbound queue
 			// are the same, create one rule for outbound traffic
-			rules = append(rules,
+			return append(rules,
 				createNFTRule(false, dstPortOffset, stateNewEst, r.addr, r.cfg, r.cfg.Verdict.Queue, r.chain, r.contID),
 				createNFTRule(true, srcPortOffset, stateEst, r.addr, r.cfg, r.cfg.Verdict.InputEstQueue, r.estChain, r.contID),
 			)
 		}
-	case r.inbound:
-		// if rule is inbound and queue and established inbound queue
-		// are different, need to create separate rules for them;
-		// or, logging was requested which means we need to create a
-		// separate rule for new traffic
-		rules = append(rules,
+	}
+
+	// if rule is inbound and queue and established inbound queue
+	// are different, need to create separate rules for them;
+	// or, logging was requested which means we need to create a
+	// separate rule for new traffic
+	if r.inbound {
+		return append(rules,
 			createNFTRule(true, dstPortOffset, stateNew, r.addr, r.cfg, r.cfg.Verdict.Queue, r.chain, r.contID),
 			createNFTRule(true, dstPortOffset, stateEst, r.addr, r.cfg, r.cfg.Verdict.InputEstQueue, r.chain, r.contID),
 			createNFTRule(false, srcPortOffset, stateEst, r.addr, r.cfg, r.cfg.Verdict.OutputEstQueue, r.estChain, r.contID),
 		)
-	case !r.inbound:
-		// if rule is outbound and queue and established outbound queue
-		// are different, need to create separate rules for them;
-		// or, logging was requested which means we need to create a
-		// separate rule for new traffic
-		rules = append(rules,
-			createNFTRule(false, dstPortOffset, stateNew, r.addr, r.cfg, r.cfg.Verdict.Queue, r.chain, r.contID),
-			createNFTRule(false, dstPortOffset, stateEst, r.addr, r.cfg, r.cfg.Verdict.OutputEstQueue, r.chain, r.contID),
-			createNFTRule(true, srcPortOffset, stateEst, r.addr, r.cfg, r.cfg.Verdict.InputEstQueue, r.estChain, r.contID),
-		)
 	}
 
-	return rules
+	// if rule is outbound and queue and established outbound queue
+	// are different, need to create separate rules for them;
+	// or, logging was requested which means we need to create a
+	// separate rule for new traffic
+	return append(rules,
+		createNFTRule(false, dstPortOffset, stateNew, r.addr, r.cfg, r.cfg.Verdict.Queue, r.chain, r.contID),
+		createNFTRule(false, dstPortOffset, stateEst, r.addr, r.cfg, r.cfg.Verdict.OutputEstQueue, r.chain, r.contID),
+		createNFTRule(true, srcPortOffset, stateEst, r.addr, r.cfg, r.cfg.Verdict.InputEstQueue, r.estChain, r.contID),
+	)
 }
 
 func createNFTRule(inbound bool, portOffset, state uint32, addr []byte, cfg ruleConfig, queueNum uint16, chain *nftables.Chain, contID string) *nftables.Rule {
