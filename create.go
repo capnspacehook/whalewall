@@ -71,7 +71,9 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 	var rulesCfg config
 	cfg, configExists := container.Config.Labels[rulesLabel]
 	if configExists {
-		if err := yaml.Unmarshal([]byte(cfg), &rulesCfg); err != nil {
+		dec := yaml.NewDecoder(strings.NewReader(cfg))
+		dec.KnownFields(true)
+		if err := dec.Decode(&rulesCfg); err != nil {
 			return fmt.Errorf("error parsing rules: %w", err)
 		}
 		if err := validateConfig(rulesCfg); err != nil {
