@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"syscall"
 
@@ -14,6 +15,11 @@ func (r *ruleManager) deleteRules(ctx context.Context) {
 	for id := range r.deleteCh {
 		name, err := r.db.GetContainerName(ctx, id)
 		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				// container is not in database, most likely an error was
+				// encountered when creating rules for it
+				continue
+			}
 			r.logger.Error("error getting name of container", zap.String("container.id", id[:12]), zap.Error(err))
 			continue
 		}

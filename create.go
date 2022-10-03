@@ -20,6 +20,8 @@ import (
 )
 
 const (
+	hostNetworkName = "host"
+
 	composeProjectLabel = "com.docker.compose.project"
 	composeServiceLabel = "com.docker.compose.service"
 	composeContNumLabel = "com.docker.compose.container-number"
@@ -63,7 +65,17 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 	contName := stripName(container.Name)
 	logger := r.logger.With(zap.String("container.id", container.ID[:12]), zap.String("container.name", contName))
 
-	logger.Info("adding rules")
+	// check that network settings are valid
+	if container.NetworkSettings == nil {
+		return fmt.Errorf("container %q has no network settings", contName)
+	}
+	if len(container.NetworkSettings.Networks) == 1 {
+		if _, ok := container.NetworkSettings.Networks[hostNetworkName]; ok {
+			return fmt.Errorf("container %q is using host networking, rules cannot be created for it", contName)
+		}
+	}
+
+	logger.Info("creating rules")
 
 	// parse rules config if the rules label exists; if the label
 	// does not exist, no rules will be added but all traffic to
