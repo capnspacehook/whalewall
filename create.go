@@ -102,7 +102,7 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 	contChainName := buildChainName(contName, container.ID)
 	chain := &nftables.Chain{
 		Name:  contChainName,
-		Table: r.chain.Table,
+		Table: filterTable,
 		Type:  nftables.ChainTypeFilter,
 	}
 	nfc.AddChain(chain)
@@ -151,12 +151,12 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 	)
 
 	// ensure we aren't creating existing rules
-	curRules, err := nfc.GetRules(r.chain.Table, r.chain)
+	curRules, err := nfc.GetRules(filterTable, whalewallChain)
 	if err != nil {
-		return fmt.Errorf("error getting rules of %q: %w", r.chain.Name, err)
+		return fmt.Errorf("error getting rules of %q: %w", whalewallChainName, err)
 	}
 	for i := range nftRules {
-		if nftRules[i].Chain.Name == mainChainName {
+		if nftRules[i].Chain.Name == whalewallChainName {
 			if findRule(logger, nftRules[i], curRules) {
 				nftRules = slices.Delete(nftRules, i, i)
 			}
@@ -180,8 +180,8 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 		})
 	}
 
-	if err := nfc.SetAddElements(r.containerAddrSet, addrElems); err != nil {
-		return fmt.Errorf("error adding elements to set %q: %w", r.containerAddrSet.Name, err)
+	if err := nfc.SetAddElements(containerAddrSet, addrElems); err != nil {
+		return fmt.Errorf("error adding elements to set %q: %w", containerAddrSetName, err)
 	}
 
 	if err := nfc.Flush(); err != nil {
@@ -562,7 +562,7 @@ func (r *ruleManager) createOutputRules(ctx context.Context, ruleCfgs []ruleConf
 					return nil, fmt.Errorf("error getting container %q ID from database: %w", ruleCfg.Container, err)
 				}
 				rule.estChain = &nftables.Chain{
-					Table: r.chain.Table,
+					Table: filterTable,
 					Name:  buildChainName(name, id),
 				}
 			}

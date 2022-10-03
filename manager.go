@@ -16,7 +16,6 @@ import (
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
-	"github.com/google/nftables"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 	_ "modernc.org/sqlite"
@@ -49,9 +48,6 @@ type ruleManager struct {
 
 	db        *database.DB
 	dockerCli *client.Client
-
-	chain            *nftables.Chain
-	containerAddrSet *nftables.Set
 }
 
 func newRuleManager(logger *zap.Logger) *ruleManager {
@@ -148,6 +144,20 @@ func (r *ruleManager) start(ctx context.Context, dataDir string) error {
 }
 
 func (r *ruleManager) init(ctx context.Context, dataDir string) error {
+	err := r.initDB(ctx, dataDir)
+	if err != nil {
+		return err
+	}
+
+	r.dockerCli, err = client.NewClientWithOpts(client.FromEnv)
+	if err != nil {
+		return fmt.Errorf("error creating docker client: %w", err)
+	}
+
+	return nil
+}
+
+func (r *ruleManager) initDB(ctx context.Context, dataDir string) error {
 	// create data directory if it doesn't exist
 	dataDir, err := filepath.Abs(dataDir)
 	if err != nil {
@@ -192,11 +202,6 @@ func (r *ruleManager) init(ctx context.Context, dataDir string) error {
 	r.db, err = database.NewDB(ctx, sqlDB)
 	if err != nil {
 		return fmt.Errorf("error preparing database queries: %w", err)
-	}
-
-	r.dockerCli, err = client.NewClientWithOpts(client.FromEnv)
-	if err != nil {
-		return fmt.Errorf("error creating docker client: %w", err)
 	}
 
 	return nil

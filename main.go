@@ -14,6 +14,7 @@ import (
 )
 
 var (
+	clear          bool
 	dataDir        string
 	debugLogs      bool
 	logPath        string
@@ -21,6 +22,7 @@ var (
 )
 
 func init() {
+	flag.BoolVar(&clear, "clear", false, "remove all firewall rules created by whalewall")
 	flag.StringVar(&dataDir, "d", ".", "directory to store state in")
 	flag.BoolVar(&debugLogs, "debug", false, "enable debug logging")
 	flag.StringVar(&logPath, "l", "stdout", "path to log to")
@@ -58,6 +60,20 @@ func main() {
 		log.Fatalf("error creating logger: %v", err)
 	}
 
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	r := newRuleManager(logger)
+
+	// remove all created firewall rules if the use asked to clear
+	if clear {
+		logger.Info("clearing rules")
+		if err := r.clear(ctx, dataDir); err != nil {
+			logger.Fatal("error clearing rules", zap.Error(err))
+		}
+		os.Exit(0)
+	}
+
 	// log current version/commit
 	versionFields := []zap.Field{
 		zap.String("version", version),
@@ -71,10 +87,6 @@ func main() {
 	logger.Info("starting whalewall", versionFields...)
 
 	// start managing firewall rules
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-
-	r := newRuleManager(logger)
 	if err = r.start(ctx, dataDir); err != nil {
 		logger.Fatal("error starting", zap.Error(err))
 	}

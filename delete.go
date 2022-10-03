@@ -17,8 +17,8 @@ func (r *ruleManager) deleteRules(ctx context.Context) {
 			r.logger.Error("error getting name of container", zap.String("container.id", id[:12]), zap.Error(err))
 			continue
 		}
-		r.logger.Info("deleting rules", zap.String("container.id", id[:12]), zap.String("container.name", name))
 
+		r.logger.Info("deleting rules", zap.String("container.id", id[:12]), zap.String("container.name", name))
 		r.deleteContainerRules(ctx, id, name)
 	}
 }
@@ -31,9 +31,9 @@ func (r *ruleManager) deleteContainerRules(ctx context.Context, id, name string)
 		return
 	}
 
-	rules, err := nfc.GetRules(r.chain.Table, r.chain)
+	rules, err := nfc.GetRules(filterTable, whalewallChain)
 	if err != nil {
-		logger.Error("error getting rules of chain", zap.String("chain.name", r.chain.Name), zap.Error(err))
+		logger.Error("error getting rules of chain", zap.String("chain.name", whalewallChain.Name), zap.Error(err))
 		return
 	}
 
@@ -47,7 +47,7 @@ func (r *ruleManager) deleteContainerRules(ctx context.Context, id, name string)
 
 	for _, addr := range addrs {
 		e := []nftables.SetElement{{Key: addr}}
-		if err := nfc.SetDeleteElements(r.containerAddrSet, e); err != nil {
+		if err := nfc.SetDeleteElements(containerAddrSet, e); err != nil {
 			logger.Error("error marshaling set elements", zap.Error(err))
 			continue
 		}
@@ -68,7 +68,7 @@ func (r *ruleManager) deleteContainerRules(ctx context.Context, id, name string)
 	// delete rules in other container's chains
 	for _, estCont := range estContainers {
 		chain := &nftables.Chain{
-			Table: r.chain.Table,
+			Table: filterTable,
 			Name:  buildChainName(estCont.Name, estCont.DstContainerID),
 		}
 		rules, err := nfc.GetRules(chain.Table, chain)
@@ -81,7 +81,7 @@ func (r *ruleManager) deleteContainerRules(ctx context.Context, id, name string)
 
 	chainName := buildChainName(name, id)
 	nfc.DelChain(&nftables.Chain{
-		Table: r.chain.Table,
+		Table: filterTable,
 		Name:  chainName,
 	})
 	err = nfc.Flush()

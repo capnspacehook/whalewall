@@ -30,7 +30,7 @@ func (r *ruleManager) cleanupRules(ctx context.Context) error {
 		if !c.State.Running {
 			contName := stripName(container.Name)
 			r.logger.Info("cleaning rules of stopped container", zap.String("container.id", container.ID[:12]), zap.String("container.name", contName))
-			r.deleteContainerRules(ctx, container.ID, stripName(container.Name))
+			r.deleteContainerRules(ctx, container.ID, contName)
 		}
 	}
 
