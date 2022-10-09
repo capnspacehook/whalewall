@@ -16,6 +16,10 @@ func (r *ruleManager) clear(ctx context.Context, dataDir string) error {
 		return err
 	}
 
+	return r.clearRules(ctx)
+}
+
+func (r *ruleManager) clearRules(ctx context.Context) error {
 	// delete container chains
 	containers, err := r.db.GetContainers(ctx)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {

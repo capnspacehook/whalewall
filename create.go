@@ -42,8 +42,12 @@ const (
 
 var (
 	errShuttingDown = errors.New("shutting down")
-	localAddr       = netip.MustParseAddr("127.0.0.1")
-	zeroUint32      = []byte{0, 0, 0, 0}
+
+	localAddr     = netip.MustParseAddr("127.0.0.1")
+	zeroUint32    = []byte{0, 0, 0, 0}
+	acceptVerdict = &expr.Verdict{
+		Kind: expr.VerdictAccept,
+	}
 )
 
 func (r *ruleManager) createRules(ctx context.Context) {
@@ -146,21 +150,7 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 	}
 
 	// create rule to drop all not explicitly allowed traffic
-	logPrefix := contChainName + " drop: "
-	nftRules = append(nftRules,
-		&nftables.Rule{
-			Table: chain.Table,
-			Chain: chain,
-			Exprs: []expr.Any{
-				&expr.Counter{},
-				logExpr(logPrefix),
-				&expr.Verdict{
-					Kind: expr.VerdictDrop,
-				},
-			},
-			UserData: []byte(container.ID),
-		},
-	)
+	nftRules = append(nftRules, createDropRule(chain, container.ID))
 
 	// ensure we aren't creating existing rules
 	curRules, err := nfc.GetRules(filterTable, whalewallChain)
@@ -772,11 +762,7 @@ func createNFTRule(inbound bool, portOffset, state uint32, addr []byte, cfg rule
 			},
 		)
 	default:
-		exprs = append(exprs,
-			&expr.Verdict{
-				Kind: expr.VerdictAccept,
-			},
-		)
+		exprs = append(exprs, acceptVerdict)
 	}
 
 	return &nftables.Rule{
@@ -895,6 +881,21 @@ func logExpr(prefix string) expr.Any {
 		Key:   (1 << unix.NFTA_LOG_PREFIX) | (1 << unix.NFTA_LOG_LEVEL),
 		Level: expr.LogLevelInfo,
 		Data:  []byte(prefix),
+	}
+}
+
+func createDropRule(chain *nftables.Chain, id string) *nftables.Rule {
+	return &nftables.Rule{
+		Table: chain.Table,
+		Chain: chain,
+		Exprs: []expr.Any{
+			&expr.Counter{},
+			logExpr(chain.Name + " drop: "),
+			&expr.Verdict{
+				Kind: expr.VerdictDrop,
+			},
+		},
+		UserData: []byte(id),
 	}
 }
 

@@ -106,6 +106,9 @@ func validateRule(r ruleConfig) error {
 	if r.Port != 0 && r.Proto == "" {
 		return errors.New(`"proto" must be set when "port" is set`)
 	}
+	if r.Proto == "" && r.Port != 0 {
+		return errors.New(`"port" must be set when "proto" is set`)
+	}
 	if r.Proto != "" && r.Proto != "tcp" && r.Proto != "udp" {
 		return fmt.Errorf("unknown protocol %q", r.Proto)
 	}
