@@ -137,7 +137,7 @@ mapped_ports:
   # controls traffic from localhost
   localhost:
     # required; allow traffic from localhost or not 
-    allowed: false
+    allow: false
     # optional; log new inbound traffic that this rule will match
     log_prefix: ""
     # optional; settings that allow you to filter traffic further if desired
@@ -156,7 +156,7 @@ mapped_ports:
   # controls traffic from external networks (from any non-loopback network interface)
   external:
     # required; allow external traffic or not
-    allowed: false
+    allow: false
     # optional; log new inbound traffic that this rule will match
     log_prefix: ""
     # optional; an IP address, CIDR, or range of IP addresses to allow traffic from
