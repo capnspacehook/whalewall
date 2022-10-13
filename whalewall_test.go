@@ -34,6 +34,42 @@ func TestRuleCreation(t *testing.T) {
 		expectedRules map[*nftables.Chain][]*nftables.Rule
 	}{
 		{
+			name: "deny all",
+			container: types.ContainerJSON{
+				ContainerJSONBase: &types.ContainerJSONBase{
+					ID:   cont1ID,
+					Name: "/" + cont1Name,
+				},
+				Config: &container.Config{
+					Labels: map[string]string{
+						enabledLabel: "true",
+					},
+				},
+				NetworkSettings: &types.NetworkSettings{
+					Networks: map[string]*network.EndpointSettings{
+						"default": {
+							Gateway:   gatewayAddr.String(),
+							IPAddress: cont1Addr.String(),
+						},
+					},
+				},
+			},
+			expectedRules: map[*nftables.Chain][]*nftables.Rule{
+				{
+					Name:  buildChainName(cont1Name, cont1ID),
+					Table: filterTable,
+				}: {
+					createDropRule(
+						&nftables.Chain{
+							Name:  buildChainName(cont1Name, cont1ID),
+							Table: filterTable,
+						},
+						cont1ID,
+					),
+				},
+			},
+		},
+		{
 			name: "allow HTTPS outbound",
 			container: types.ContainerJSON{
 				ContainerJSONBase: &types.ContainerJSONBase{
@@ -46,8 +82,7 @@ func TestRuleCreation(t *testing.T) {
 						rulesLabel: `
 output:
   - proto: tcp
-    port: 443
-`,
+    port: 443`,
 					},
 				},
 				NetworkSettings: &types.NetworkSettings{
@@ -114,8 +149,7 @@ output:
 output:
   - ip: 1.1.1.1
     proto: tcp
-    port: 443
-`,
+    port: 443`,
 					},
 				},
 				NetworkSettings: &types.NetworkSettings{
@@ -184,8 +218,7 @@ output:
 output:
   - ip: 192.168.1.0/24
     proto: udp
-    port: 53
-`,
+    port: 53`,
 					},
 				},
 				NetworkSettings: &types.NetworkSettings{
@@ -241,6 +274,333 @@ output:
 			},
 		},
 		{
+			name: "verdict with log prefix",
+			container: types.ContainerJSON{
+				ContainerJSONBase: &types.ContainerJSONBase{
+					ID:   cont1ID,
+					Name: "/" + cont1Name,
+				},
+				Config: &container.Config{
+					Labels: map[string]string{
+						enabledLabel: "true",
+						rulesLabel: `
+output:
+  - log_prefix: "logger pfx"
+    proto: tcp
+    port: 443`,
+					},
+				},
+				NetworkSettings: &types.NetworkSettings{
+					Networks: map[string]*network.EndpointSettings{
+						"default": {
+							Gateway:   gatewayAddr.String(),
+							IPAddress: cont1Addr.String(),
+						},
+					},
+				},
+			},
+			expectedRules: map[*nftables.Chain][]*nftables.Rule{
+				{
+					Name:  buildChainName(cont1Name, cont1ID),
+					Table: filterTable,
+				}: {
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchProtoExprs(unix.IPPROTO_TCP),
+							matchPortExprs(443, dstPortOffset),
+							matchConnStateExprs(stateNew),
+							[]expr.Any{
+								&expr.Counter{},
+								logExpr(formatLogPrefix("logger pfx", cont1Name, cont1ID)),
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchProtoExprs(unix.IPPROTO_TCP),
+							matchPortExprs(443, dstPortOffset),
+							matchConnStateExprs(stateEst),
+							[]expr.Any{
+								&expr.Counter{},
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchProtoExprs(unix.IPPROTO_TCP),
+							matchPortExprs(443, srcPortOffset),
+							matchConnStateExprs(stateEst),
+							[]expr.Any{
+								&expr.Counter{},
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					createDropRule(
+						&nftables.Chain{
+							Name:  buildChainName(cont1Name, cont1ID),
+							Table: filterTable,
+						},
+						cont1ID,
+					),
+				},
+			},
+		},
+		{
+			name: "verdict with queue",
+			container: types.ContainerJSON{
+				ContainerJSONBase: &types.ContainerJSONBase{
+					ID:   cont1ID,
+					Name: "/" + cont1Name,
+				},
+				Config: &container.Config{
+					Labels: map[string]string{
+						enabledLabel: "true",
+						rulesLabel: `
+output:
+  - proto: tcp
+    port: 443
+    verdict:
+      queue: 1000`,
+					},
+				},
+				NetworkSettings: &types.NetworkSettings{
+					Networks: map[string]*network.EndpointSettings{
+						"default": {
+							Gateway:   gatewayAddr.String(),
+							IPAddress: cont1Addr.String(),
+						},
+					},
+				},
+			},
+			expectedRules: map[*nftables.Chain][]*nftables.Rule{
+				{
+					Name:  buildChainName(cont1Name, cont1ID),
+					Table: filterTable,
+				}: {
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchProtoExprs(unix.IPPROTO_TCP),
+							matchPortExprs(443, dstPortOffset),
+							matchConnStateExprs(stateNew),
+							[]expr.Any{
+								&expr.Counter{},
+								&expr.Queue{
+									Num: 1000,
+								},
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchProtoExprs(unix.IPPROTO_TCP),
+							matchPortExprs(443, dstPortOffset),
+							matchConnStateExprs(stateEst),
+							[]expr.Any{
+								&expr.Counter{},
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchProtoExprs(unix.IPPROTO_TCP),
+							matchPortExprs(443, srcPortOffset),
+							matchConnStateExprs(stateEst),
+							[]expr.Any{
+								&expr.Counter{},
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					createDropRule(
+						&nftables.Chain{
+							Name:  buildChainName(cont1Name, cont1ID),
+							Table: filterTable,
+						},
+						cont1ID,
+					),
+				},
+			},
+		},
+		{
+			name: "verdict with queue and est queues",
+			container: types.ContainerJSON{
+				ContainerJSONBase: &types.ContainerJSONBase{
+					ID:   cont1ID,
+					Name: "/" + cont1Name,
+				},
+				Config: &container.Config{
+					Labels: map[string]string{
+						enabledLabel: "true",
+						rulesLabel: `
+output:
+  - proto: tcp
+    port: 443
+    verdict:
+      queue: 1000
+      input_est_queue: 1001
+      output_est_queue: 1002`,
+					},
+				},
+				NetworkSettings: &types.NetworkSettings{
+					Networks: map[string]*network.EndpointSettings{
+						"default": {
+							Gateway:   gatewayAddr.String(),
+							IPAddress: cont1Addr.String(),
+						},
+					},
+				},
+			},
+			expectedRules: map[*nftables.Chain][]*nftables.Rule{
+				{
+					Name:  buildChainName(cont1Name, cont1ID),
+					Table: filterTable,
+				}: {
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchProtoExprs(unix.IPPROTO_TCP),
+							matchPortExprs(443, dstPortOffset),
+							matchConnStateExprs(stateNew),
+							[]expr.Any{
+								&expr.Counter{},
+								&expr.Queue{
+									Num: 1000,
+								},
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchProtoExprs(unix.IPPROTO_TCP),
+							matchPortExprs(443, dstPortOffset),
+							matchConnStateExprs(stateEst),
+							[]expr.Any{
+								&expr.Counter{},
+								&expr.Queue{
+									Num: 1002,
+								},
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchProtoExprs(unix.IPPROTO_TCP),
+							matchPortExprs(443, srcPortOffset),
+							matchConnStateExprs(stateEst),
+							[]expr.Any{
+								&expr.Counter{},
+								&expr.Queue{
+									Num: 1001,
+								},
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					createDropRule(
+						&nftables.Chain{
+							Name:  buildChainName(cont1Name, cont1ID),
+							Table: filterTable,
+						},
+						cont1ID,
+					),
+				},
+			},
+		},
+		{
+			name: "verdict with queue and same output est queue",
+			container: types.ContainerJSON{
+				ContainerJSONBase: &types.ContainerJSONBase{
+					ID:   cont1ID,
+					Name: "/" + cont1Name,
+				},
+				Config: &container.Config{
+					Labels: map[string]string{
+						enabledLabel: "true",
+						rulesLabel: `
+output:
+  - proto: tcp
+    port: 443
+    verdict:
+      queue: 1000
+      input_est_queue: 1001
+      output_est_queue: 1000`,
+					},
+				},
+				NetworkSettings: &types.NetworkSettings{
+					Networks: map[string]*network.EndpointSettings{
+						"default": {
+							Gateway:   gatewayAddr.String(),
+							IPAddress: cont1Addr.String(),
+						},
+					},
+				},
+			},
+			expectedRules: map[*nftables.Chain][]*nftables.Rule{
+				{
+					Name:  buildChainName(cont1Name, cont1ID),
+					Table: filterTable,
+				}: {
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchProtoExprs(unix.IPPROTO_TCP),
+							matchPortExprs(443, dstPortOffset),
+							matchConnStateExprs(stateNewEst),
+							[]expr.Any{
+								&expr.Counter{},
+								&expr.Queue{
+									Num: 1000,
+								},
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchProtoExprs(unix.IPPROTO_TCP),
+							matchPortExprs(443, srcPortOffset),
+							matchConnStateExprs(stateEst),
+							[]expr.Any{
+								&expr.Counter{},
+								&expr.Queue{
+									Num: 1001,
+								},
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					createDropRule(
+						&nftables.Chain{
+							Name:  buildChainName(cont1Name, cont1ID),
+							Table: filterTable,
+						},
+						cont1ID,
+					),
+				},
+			},
+		},
+		{
 			name: "allow external access to mapped ports",
 			container: types.ContainerJSON{
 				ContainerJSONBase: &types.ContainerJSONBase{
@@ -254,8 +614,7 @@ output:
 mapped_ports:
   external:
     allow: true
-    ip: 192.168.1.0/24
-`,
+    ip: 192.168.1.0/24`,
 					},
 				},
 				NetworkSettings: &types.NetworkSettings{
@@ -362,7 +721,6 @@ mapped_ports:
 				},
 			},
 		},
-
 		{
 			name: "allow localhost access to mapped ports",
 			container: types.ContainerJSON{
@@ -376,8 +734,7 @@ mapped_ports:
 						rulesLabel: `
 mapped_ports:
   localhost:
-    allow: true
-`,
+    allow: true`,
 					},
 				},
 				NetworkSettings: &types.NetworkSettings{
@@ -442,6 +799,188 @@ mapped_ports:
 				},
 			},
 		},
+		{
+			name: "allow localhost access to mapped ports with queue",
+			container: types.ContainerJSON{
+				ContainerJSONBase: &types.ContainerJSONBase{
+					ID:   cont1ID,
+					Name: "/" + cont1Name,
+				},
+				Config: &container.Config{
+					Labels: map[string]string{
+						enabledLabel: "true",
+						rulesLabel: `
+mapped_ports:
+  localhost:
+    allow: true
+    verdict:
+      queue: 1000`,
+					},
+				},
+				NetworkSettings: &types.NetworkSettings{
+					NetworkSettingsBase: types.NetworkSettingsBase{
+						Ports: nat.PortMap{
+							"443/udp": []nat.PortBinding{
+								{
+									HostIP:   "0.0.0.0",
+									HostPort: "8443",
+								},
+							},
+						},
+					},
+					Networks: map[string]*network.EndpointSettings{
+						"default": {
+							Gateway:   gatewayAddr.String(),
+							IPAddress: cont1Addr.String(),
+						},
+					},
+				},
+			},
+			expectedRules: map[*nftables.Chain][]*nftables.Rule{
+				{
+					Name:  buildChainName(cont1Name, cont1ID),
+					Table: filterTable,
+				}: {
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(gatewayAddr.As4())[:], srcAddrOffset),
+							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchProtoExprs(unix.IPPROTO_UDP),
+							matchPortExprs(443, dstPortOffset),
+							matchConnStateExprs(stateNew),
+							[]expr.Any{
+								&expr.Counter{},
+								&expr.Queue{
+									Num: 1000,
+								},
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(gatewayAddr.As4())[:], srcAddrOffset),
+							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchProtoExprs(unix.IPPROTO_UDP),
+							matchPortExprs(443, dstPortOffset),
+							matchConnStateExprs(stateEst),
+							[]expr.Any{
+								&expr.Counter{},
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchIPExprs(ref(gatewayAddr.As4())[:], dstAddrOffset),
+							matchProtoExprs(unix.IPPROTO_UDP),
+							matchPortExprs(443, srcPortOffset),
+							matchConnStateExprs(stateEst),
+							[]expr.Any{
+								&expr.Counter{},
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					createDropRule(
+						&nftables.Chain{
+							Name:  buildChainName(cont1Name, cont1ID),
+							Table: filterTable,
+						},
+						cont1ID,
+					),
+				},
+			},
+		},
+		{
+			name: "allow localhost access to mapped ports with same input est queue",
+			container: types.ContainerJSON{
+				ContainerJSONBase: &types.ContainerJSONBase{
+					ID:   cont1ID,
+					Name: "/" + cont1Name,
+				},
+				Config: &container.Config{
+					Labels: map[string]string{
+						enabledLabel: "true",
+						rulesLabel: `
+mapped_ports:
+  localhost:
+    allow: true
+    verdict:
+      queue: 1000
+      input_est_queue: 1000
+      output_est_queue: 1001`,
+					},
+				},
+				NetworkSettings: &types.NetworkSettings{
+					NetworkSettingsBase: types.NetworkSettingsBase{
+						Ports: nat.PortMap{
+							"443/udp": []nat.PortBinding{
+								{
+									HostIP:   "0.0.0.0",
+									HostPort: "8443",
+								},
+							},
+						},
+					},
+					Networks: map[string]*network.EndpointSettings{
+						"default": {
+							Gateway:   gatewayAddr.String(),
+							IPAddress: cont1Addr.String(),
+						},
+					},
+				},
+			},
+			expectedRules: map[*nftables.Chain][]*nftables.Rule{
+				{
+					Name:  buildChainName(cont1Name, cont1ID),
+					Table: filterTable,
+				}: {
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(gatewayAddr.As4())[:], srcAddrOffset),
+							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchProtoExprs(unix.IPPROTO_UDP),
+							matchPortExprs(443, dstPortOffset),
+							matchConnStateExprs(stateNewEst),
+							[]expr.Any{
+								&expr.Counter{},
+								&expr.Queue{
+									Num: 1000,
+								},
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchIPExprs(ref(gatewayAddr.As4())[:], dstAddrOffset),
+							matchProtoExprs(unix.IPPROTO_UDP),
+							matchPortExprs(443, srcPortOffset),
+							matchConnStateExprs(stateEst),
+							[]expr.Any{
+								&expr.Counter{},
+								&expr.Queue{
+									Num: 1001,
+								},
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					createDropRule(
+						&nftables.Chain{
+							Name:  buildChainName(cont1Name, cont1ID),
+							Table: filterTable,
+						},
+						cont1ID,
+					),
+				},
+			},
+		},
 	}
 
 	is := is.New(t)
@@ -486,9 +1025,8 @@ mapped_ports:
 					// cases above
 					expectedRules[i].Table = chain.Table
 
-					diff := cmp.Diff(expectedRules[i], rules[i], cmp.Comparer(comparer))
-					if diff != "" {
-						t.Errorf("rules not equal: %s", diff)
+					if !cmp.Equal(expectedRules[i], rules[i], cmp.Comparer(comparer)) {
+						t.Errorf("rule %d not equal:\n%s", i, cmp.Diff(expectedRules[i].Exprs, rules[i].Exprs))
 					}
 				}
 			}
