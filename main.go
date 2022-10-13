@@ -28,8 +28,11 @@ func init() {
 	flag.StringVar(&logPath, "l", "stdout", "path to log to")
 	flag.BoolVar(&displayVersion, "version", false, "print version and build information and exit")
 }
-
 func main() {
+	os.Exit(mainRet())
+}
+
+func mainRet() int {
 	flag.Parse()
 
 	info, ok := debug.ReadBuildInfo()
@@ -42,7 +45,7 @@ func main() {
 	}
 	if displayVersion {
 		printVersionInfo(info)
-		os.Exit(0)
+		return 0
 	}
 
 	// build logger
@@ -57,7 +60,8 @@ func main() {
 
 	logger, err := logCfg.Build()
 	if err != nil {
-		log.Fatalf("error creating logger: %v", err)
+		log.Printf("error creating logger: %v", err)
+		return 1
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -69,9 +73,10 @@ func main() {
 	if clear {
 		logger.Info("clearing rules")
 		if err := r.clear(ctx, dataDir); err != nil {
-			logger.Fatal("error clearing rules", zap.Error(err))
+			logger.Error("error clearing rules", zap.Error(err))
+			return 1
 		}
-		os.Exit(0)
+		return 0
 	}
 
 	// log current version/commit
@@ -88,10 +93,12 @@ func main() {
 
 	// start managing firewall rules
 	if err = r.start(ctx, dataDir); err != nil {
-		logger.Fatal("error starting", zap.Error(err))
+		logger.Error("error starting", zap.Error(err))
+		return 1
 	}
 
 	<-ctx.Done()
 	logger.Info("shutting down")
 	r.stop()
+	return 0
 }
