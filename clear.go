@@ -50,7 +50,10 @@ func (r *ruleManager) clearRules(ctx context.Context) error {
 
 		jumpRule := createJumpRule(chain, whalewallChainName)
 		if findRule(r.logger, jumpRule, rules) {
-			nfc.DelRule(jumpRule)
+			if err := nfc.DelRule(jumpRule); err != nil {
+				r.logger.Error("error deleting rule", zap.Error(err))
+				continue
+			}
 			err = nfc.Flush()
 			if err != nil && !errors.Is(err, syscall.ENOENT) {
 				r.logger.Error("error deleting rule from chain", zap.String("chain.name", chainName), zap.Error(err))
