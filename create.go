@@ -14,6 +14,7 @@ import (
 	"github.com/google/nftables"
 	"github.com/google/nftables/expr"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 	"golang.org/x/sys/unix"
 	"gopkg.in/yaml.v3"
@@ -433,7 +434,13 @@ func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types
 			return nil, nil, fmt.Errorf("error parsing gateway of network: %w", err)
 		}
 
-		for port, hostPorts := range container.NetworkSettings.Ports {
+		// sort mapped ports so rules are created deterministically making
+		// testing much easier
+		ports := maps.Keys(container.NetworkSettings.Ports)
+		slices.Sort(ports)
+
+		for _, port := range ports {
+			hostPorts := container.NetworkSettings.Ports[port]
 			localAllowed := mappedPortsCfg.Localhost.Allow
 			for _, hostPort := range hostPorts {
 				addr, err := netip.ParseAddr(hostPort.HostIP)
