@@ -3,7 +3,8 @@ module github.com/capnspacehook/whalewall
 go 1.19
 
 require (
-	github.com/docker/docker v20.10.18+incompatible
+	github.com/docker/docker v20.10.19+incompatible
+	github.com/docker/go-connections v0.4.0
 	github.com/google/go-cmp v0.5.9
 	github.com/google/nftables v0.0.0-20220928163316-0aa65c0fdd5c
 	github.com/matryer/is v1.4.0
@@ -18,7 +19,6 @@ require (
 require (
 	github.com/Microsoft/go-winio v0.5.1 // indirect
 	github.com/docker/distribution v2.8.1+incompatible // indirect
-	github.com/docker/go-connections v0.4.0 // indirect
 	github.com/docker/go-units v0.4.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/uuid v1.3.0 // indirect
