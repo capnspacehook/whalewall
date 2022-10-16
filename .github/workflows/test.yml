@@ -1,0 +1,25 @@
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+name: Test
+jobs:
+  race-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-go@v3
+        with:
+          go-version: 1.19.x
+          check-latest: true
+
+      - uses: actions/checkout@v3
+
+      # the test is compiled and run as root so that whalewall can
+      # interface with nftables, which is a privileged operation
+      - run: |
+          go test -c -race -o whalewall.test
+          sudo ./whalewall.test -test.v -test.failfast
