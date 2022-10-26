@@ -492,7 +492,7 @@ func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types
 						contID: container.ID,
 					}
 					nftRules = append(nftRules,
-						createNFTRules(rule)...,
+						r.createNFTRules(rule)...,
 					)
 				}
 			}
@@ -517,7 +517,7 @@ func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types
 					contID: container.ID,
 				}
 				nftRules = append(nftRules,
-					createNFTRules(rule)...,
+					r.createNFTRules(rule)...,
 				)
 			}
 		}
@@ -577,13 +577,13 @@ func (r *ruleManager) createOutputRules(ctx context.Context, ruleCfgs []ruleConf
 			}
 
 			nftRules = append(nftRules,
-				createNFTRules(rule)...,
+				r.createNFTRules(rule)...,
 			)
 		} else {
 			for _, addr := range addrs {
 				rule.addr = addr
 				nftRules = append(nftRules,
-					createNFTRules(rule)...,
+					r.createNFTRules(rule)...,
 				)
 			}
 		}
@@ -631,44 +631,46 @@ type ruleDetails struct {
 	contID   string
 }
 
-func createNFTRules(r ruleDetails) []*nftables.Rule {
+func (r *ruleManager) createNFTRules(rd ruleDetails) []*nftables.Rule {
+	r.logger.Sugar().Debugf("creating rule: %#v", rd)
+
 	rules := make([]*nftables.Rule, 0, 3)
-	if r.estChain == nil {
-		r.estChain = r.chain
+	if rd.estChain == nil {
+		rd.estChain = rd.chain
 	}
 
-	if r.cfg.Verdict.Queue == 0 {
-		if r.cfg.LogPrefix == "" {
+	if rd.cfg.Verdict.Queue == 0 {
+		if rd.cfg.LogPrefix == "" {
 			return append(rules,
-				createNFTRule(r.inbound, dstPortOffset, stateNewEst, r.addr, r.cfg, 0, r.chain, r.contID),
-				createNFTRule(!r.inbound, srcPortOffset, stateEst, r.addr, r.cfg, 0, r.estChain, r.contID),
+				createNFTRule(rd.inbound, dstPortOffset, stateNewEst, rd.addr, rd.cfg, 0, rd.chain, rd.contID),
+				createNFTRule(!rd.inbound, srcPortOffset, stateEst, rd.addr, rd.cfg, 0, rd.estChain, rd.contID),
 			)
 		}
 		// create a separate rule for new traffic to log it
 		return append(rules,
-			createNFTRule(r.inbound, dstPortOffset, stateNew, r.addr, r.cfg, 0, r.chain, r.contID),
-			createNFTRule(r.inbound, dstPortOffset, stateEst, r.addr, r.cfg, 0, r.chain, r.contID),
-			createNFTRule(!r.inbound, srcPortOffset, stateEst, r.addr, r.cfg, 0, r.estChain, r.contID),
+			createNFTRule(rd.inbound, dstPortOffset, stateNew, rd.addr, rd.cfg, 0, rd.chain, rd.contID),
+			createNFTRule(rd.inbound, dstPortOffset, stateEst, rd.addr, rd.cfg, 0, rd.chain, rd.contID),
+			createNFTRule(!rd.inbound, srcPortOffset, stateEst, rd.addr, rd.cfg, 0, rd.estChain, rd.contID),
 		)
 	}
 
 	// If there is no log prefix set we can create one inbound rule and
 	// one outbound rule in some situations. Otherwise new traffic must
 	// be logged.
-	if r.cfg.LogPrefix == "" {
-		if r.inbound && r.cfg.Verdict.Queue == r.cfg.Verdict.InputEstQueue {
+	if rd.cfg.LogPrefix == "" {
+		if rd.inbound && rd.cfg.Verdict.Queue == rd.cfg.Verdict.InputEstQueue {
 			// if rule is inbound and queue and established inbound queue
 			// are the same, create one rule for inbound traffic
 			return append(rules,
-				createNFTRule(true, dstPortOffset, stateNewEst, r.addr, r.cfg, r.cfg.Verdict.Queue, r.chain, r.contID),
-				createNFTRule(false, srcPortOffset, stateEst, r.addr, r.cfg, r.cfg.Verdict.OutputEstQueue, r.estChain, r.contID),
+				createNFTRule(true, dstPortOffset, stateNewEst, rd.addr, rd.cfg, rd.cfg.Verdict.Queue, rd.chain, rd.contID),
+				createNFTRule(false, srcPortOffset, stateEst, rd.addr, rd.cfg, rd.cfg.Verdict.OutputEstQueue, rd.estChain, rd.contID),
 			)
-		} else if !r.inbound && r.cfg.Verdict.Queue == r.cfg.Verdict.OutputEstQueue {
+		} else if !rd.inbound && rd.cfg.Verdict.Queue == rd.cfg.Verdict.OutputEstQueue {
 			// if rule is outbound and queue and established outbound queue
 			// are the same, create one rule for outbound traffic
 			return append(rules,
-				createNFTRule(false, dstPortOffset, stateNewEst, r.addr, r.cfg, r.cfg.Verdict.Queue, r.chain, r.contID),
-				createNFTRule(true, srcPortOffset, stateEst, r.addr, r.cfg, r.cfg.Verdict.InputEstQueue, r.estChain, r.contID),
+				createNFTRule(false, dstPortOffset, stateNewEst, rd.addr, rd.cfg, rd.cfg.Verdict.Queue, rd.chain, rd.contID),
+				createNFTRule(true, srcPortOffset, stateEst, rd.addr, rd.cfg, rd.cfg.Verdict.InputEstQueue, rd.estChain, rd.contID),
 			)
 		}
 	}
@@ -677,11 +679,11 @@ func createNFTRules(r ruleDetails) []*nftables.Rule {
 	// are different, need to create separate rules for them;
 	// or, logging was requested which means we need to create a
 	// separate rule for new traffic
-	if r.inbound {
+	if rd.inbound {
 		return append(rules,
-			createNFTRule(true, dstPortOffset, stateNew, r.addr, r.cfg, r.cfg.Verdict.Queue, r.chain, r.contID),
-			createNFTRule(true, dstPortOffset, stateEst, r.addr, r.cfg, r.cfg.Verdict.InputEstQueue, r.chain, r.contID),
-			createNFTRule(false, srcPortOffset, stateEst, r.addr, r.cfg, r.cfg.Verdict.OutputEstQueue, r.estChain, r.contID),
+			createNFTRule(true, dstPortOffset, stateNew, rd.addr, rd.cfg, rd.cfg.Verdict.Queue, rd.chain, rd.contID),
+			createNFTRule(true, dstPortOffset, stateEst, rd.addr, rd.cfg, rd.cfg.Verdict.InputEstQueue, rd.chain, rd.contID),
+			createNFTRule(false, srcPortOffset, stateEst, rd.addr, rd.cfg, rd.cfg.Verdict.OutputEstQueue, rd.estChain, rd.contID),
 		)
 	}
 
@@ -690,9 +692,9 @@ func createNFTRules(r ruleDetails) []*nftables.Rule {
 	// or, logging was requested which means we need to create a
 	// separate rule for new traffic
 	return append(rules,
-		createNFTRule(false, dstPortOffset, stateNew, r.addr, r.cfg, r.cfg.Verdict.Queue, r.chain, r.contID),
-		createNFTRule(false, dstPortOffset, stateEst, r.addr, r.cfg, r.cfg.Verdict.OutputEstQueue, r.chain, r.contID),
-		createNFTRule(true, srcPortOffset, stateEst, r.addr, r.cfg, r.cfg.Verdict.InputEstQueue, r.estChain, r.contID),
+		createNFTRule(false, dstPortOffset, stateNew, rd.addr, rd.cfg, rd.cfg.Verdict.Queue, rd.chain, rd.contID),
+		createNFTRule(false, dstPortOffset, stateEst, rd.addr, rd.cfg, rd.cfg.Verdict.OutputEstQueue, rd.chain, rd.contID),
+		createNFTRule(true, srcPortOffset, stateEst, rd.addr, rd.cfg, rd.cfg.Verdict.InputEstQueue, rd.estChain, rd.contID),
 	)
 }
 

@@ -29,10 +29,10 @@ func init() {
 	flag.BoolVar(&displayVersion, "version", false, "print version and build information and exit")
 }
 func main() {
-	os.Exit(mainRet())
+	os.Exit(mainRetCode())
 }
 
-func mainRet() int {
+func mainRetCode() int {
 	flag.Parse()
 
 	info, ok := debug.ReadBuildInfo()
