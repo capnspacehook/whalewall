@@ -37,6 +37,7 @@ func (r *ruleManager) deleteContainerRules(ctx context.Context, id, name string)
 		return
 	}
 
+	// delete rules from whalewall chain
 	rules, err := nfc.GetRules(filterTable, whalewallChain)
 	if err != nil {
 		logger.Error("error getting rules of chain", zap.String("chain.name", whalewallChain.Name), zap.Error(err))
@@ -85,6 +86,7 @@ func (r *ruleManager) deleteContainerRules(ctx context.Context, id, name string)
 		deleteRulesOfChain(logger, nfc, rules, id)
 	}
 
+	// delete container chain
 	chainName := buildChainName(name, id)
 	nfc.DelChain(&nftables.Chain{
 		Table: filterTable,

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,6 +49,9 @@ var (
 	zeroUint32    = []byte{0, 0, 0, 0}
 	acceptVerdict = &expr.Verdict{
 		Kind: expr.VerdictAccept,
+	}
+	dropVerdict = &expr.Verdict{
+		Kind: expr.VerdictDrop,
 	}
 )
 
@@ -464,11 +468,11 @@ func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types
 					// local access is not allowed, but localhost won't
 					// be able to reach this port anyway since it isn't
 					// listening on 0.0.0.0 or 127.0.0.1, so no need to
-					// create any drop rules
+					// create any rules
 					continue
 				}
 
-				if localAllowed && (!mappedPortsCfg.External.Allow || mappedPortsCfg.External.IP.IsValid()) {
+				if !localAllowed || (localAllowed && (!mappedPortsCfg.External.Allow || mappedPortsCfg.External.IP.IsValid())) {
 					// Create rules to allow/drop traffic from container
 					// network gateway to container; this will only be hit
 					// for traffic originating from localhost after being
@@ -491,8 +495,38 @@ func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types
 						chain:  chain,
 						contID: container.ID,
 					}
+					rule.cfg.Verdict.drop = !localAllowed
 					nftRules = append(nftRules,
 						r.createNFTRules(rule)...,
+					)
+				}
+
+				if !localAllowed {
+					// Create rule to drop traffic going to the mapped
+					// host port. This will prevent traffic originating
+					// from localhost to be seen by Docker at all.
+					hostPortInt, err := strconv.ParseUint(hostPort.HostPort, 10, 16)
+					if err != nil {
+						return nil, nil, fmt.Errorf("error parsing host port of port mapping: %w", err)
+					}
+
+					localhostDropRule := ruleDetails{
+						inbound: true,
+						cfg: ruleConfig{
+							IP: addrOrRange{
+								addr: localAddr,
+							},
+							Proto: port.Proto(),
+							Port:  uint16(hostPortInt),
+							Verdict: verdict{
+								drop: true,
+							},
+						},
+						chain:  whalewallChain,
+						contID: container.ID,
+					}
+					nftRules = append(nftRules,
+						r.createNFTRules(localhostDropRule)...,
 					)
 				}
 			}
@@ -639,6 +673,13 @@ func (r *ruleManager) createNFTRules(rd ruleDetails) []*nftables.Rule {
 		rd.estChain = rd.chain
 	}
 
+	// if the rule is a drop rule, only need to handle new traffic
+	if rd.cfg.Verdict.drop {
+		return append(rules,
+			createNFTRule(rd.inbound, dstPortOffset, stateNew, rd.addr, rd.cfg, 0, rd.chain, rd.contID),
+		)
+	}
+
 	if rd.cfg.Verdict.Queue == 0 {
 		if rd.cfg.LogPrefix == "" {
 			return append(rules,
@@ -770,6 +811,8 @@ func createNFTRule(inbound bool, portOffset, state uint32, addr []byte, cfg rule
 				Num: queueNum,
 			},
 		)
+	case cfg.Verdict.drop:
+		exprs = append(exprs, dropVerdict)
 	default:
 		exprs = append(exprs, acceptVerdict)
 	}

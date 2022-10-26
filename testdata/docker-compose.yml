@@ -1,0 +1,45 @@
+version: "3"
+services:
+  client:
+    command: "80"
+    depends_on:
+      - server
+    image: ghcr.io/capnspacehook/eavesdropper
+    labels:
+      whalewall.enabled: true
+      whalewall.rules: |
+        mapped_ports:
+          localhost:
+            allow: true
+        output:
+          - proto: udp
+            port: 53
+          - ip: 1.1.1.1
+            proto: tcp
+            port: 80
+          - proto: tcp
+            port: 443
+          - network: default
+            container: server
+            proto: tcp
+            port: 9001
+    ports:
+      - "8080:80"
+
+  server:
+    command: "80 9001"
+    image: ghcr.io/capnspacehook/eavesdropper
+    labels:
+      whalewall.enabled: true
+      whalewall.rules: |
+        mapped_ports:
+          external:
+            allow: true
+    ports:
+      - "8081:80"
+      - "9001:9001"
+
+  tester:
+    command: "8443"
+    image: ghcr.io/capnspacehook/eavesdropper
+    network_mode: host

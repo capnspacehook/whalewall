@@ -35,6 +35,48 @@ var (
 		KeyType:  nftables.TypeIPAddr,
 		DataType: nftables.TypeVerdict,
 	}
+	srcJumpRule = &nftables.Rule{
+		Table: filterTable,
+		Chain: whalewallChain,
+		Exprs: []expr.Any{
+			// [ payload load 4b @ network header + 12 => reg 1 ]
+			&expr.Payload{
+				OperationType: expr.PayloadLoad,
+				Len:           4,
+				Base:          expr.PayloadBaseNetworkHeader,
+				Offset:        12,
+				DestRegister:  1,
+			},
+			// [ lookup reg 1 set ... dreg 0 0x0 ]
+			&expr.Lookup{
+				SourceRegister: 1,
+				SetName:        containerAddrSetName,
+				DestRegister:   0,
+				IsDestRegSet:   true,
+			},
+		},
+	}
+	dstJumpRule = &nftables.Rule{
+		Table: filterTable,
+		Chain: whalewallChain,
+		Exprs: []expr.Any{
+			// [ payload load 4b @ network header + 16 => reg 1 ]
+			&expr.Payload{
+				OperationType: expr.PayloadLoad,
+				Len:           4,
+				Base:          expr.PayloadBaseNetworkHeader,
+				Offset:        16,
+				DestRegister:  1,
+			},
+			// [ lookup reg 1 set ... dreg 0 0x0 ]
+			&expr.Lookup{
+				SourceRegister: 1,
+				SetName:        containerAddrSetName,
+				DestRegister:   0,
+				IsDestRegSet:   true,
+			},
+		},
+	}
 )
 
 func (r *ruleManager) createBaseRules() error {
@@ -139,51 +181,10 @@ func (r *ruleManager) createBaseRules() error {
 	}
 
 	// create rules to jump to container chain if packet is from/to a container
-	srcJumpRule := &nftables.Rule{
-		Table: filterTable,
-		Chain: whalewallChain,
-		Exprs: []expr.Any{
-			// [ payload load 4b @ network header + 12 => reg 1 ]
-			&expr.Payload{
-				OperationType: expr.PayloadLoad,
-				Len:           4,
-				Base:          expr.PayloadBaseNetworkHeader,
-				Offset:        12,
-				DestRegister:  1,
-			},
-			// [ lookup reg 1 set ... dreg 0 0x0 ]
-			&expr.Lookup{
-				SourceRegister: 1,
-				SetName:        containerAddrSetName,
-				DestRegister:   0,
-				IsDestRegSet:   true,
-			},
-		},
-	}
 	if addContainerJumpRules || !findRule(r.logger, srcJumpRule, mainChainRules) {
 		nfc.AddRule(srcJumpRule)
 	}
-	dstJumpRule := &nftables.Rule{
-		Table: filterTable,
-		Chain: whalewallChain,
-		Exprs: []expr.Any{
-			// [ payload load 4b @ network header + 16 => reg 1 ]
-			&expr.Payload{
-				OperationType: expr.PayloadLoad,
-				Len:           4,
-				Base:          expr.PayloadBaseNetworkHeader,
-				Offset:        16,
-				DestRegister:  1,
-			},
-			// [ lookup reg 1 set ... dreg 0 0x0 ]
-			&expr.Lookup{
-				SourceRegister: 1,
-				SetName:        containerAddrSetName,
-				DestRegister:   0,
-				IsDestRegSet:   true,
-			},
-		},
-	}
+
 	if addContainerJumpRules || !findRule(r.logger, dstJumpRule, mainChainRules) {
 		nfc.AddRule(dstJumpRule)
 	}

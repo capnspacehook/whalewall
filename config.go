@@ -48,6 +48,8 @@ type verdict struct {
 	Queue          uint16
 	InputEstQueue  uint16 `yaml:"input_est_queue"`
 	OutputEstQueue uint16 `yaml:"output_est_queue"`
+
+	drop bool
 }
 
 type addrOrRange struct {
