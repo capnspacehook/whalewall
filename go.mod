@@ -3,7 +3,7 @@ module github.com/capnspacehook/whalewall
 go 1.19
 
 require (
-	github.com/docker/docker v20.10.18+incompatible
+	github.com/docker/docker v20.10.21+incompatible
 	github.com/docker/go-connections v0.4.0
 	github.com/google/nftables v0.0.0-20221015190445-4f5cd5826fbd
 	go.uber.org/zap v1.23.0
