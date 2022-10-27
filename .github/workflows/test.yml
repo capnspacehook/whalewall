@@ -9,7 +9,9 @@ on:
 name: Test
 jobs:
   race-test:
-    runs-on: ubuntu-latest
+    # required for nftables to work correctly
+    # TODO: change to "ubuntu-latest" when 22.04 is the latest
+    runs-on: ubuntu-22.04 
     steps:
       - uses: actions/setup-go@v3
         with:
