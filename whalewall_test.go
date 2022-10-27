@@ -25,21 +25,25 @@ import (
 func TestIntegration(t *testing.T) {
 	is := is.New(t)
 
+	is.True(run(t, "docker", "compose", "-f=testdata/docker-compose.yml", "up", "-d") == 0)
+	t.Cleanup(func() {
+		run(t, "docker", "compose", "-f=testdata/docker-compose.yml", "down")
+	})
+
 	logger, err := zap.NewDevelopment()
 	is.NoErr(err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	r := newRuleManager(logger)
-	r.start(ctx, t.TempDir())
+	err = r.start(ctx, t.TempDir())
+	is.NoErr(err)
 	t.Cleanup(func() {
-		r.clearRules(ctx)
+		err = r.clearRules(ctx)
+		if err != nil {
+			t.Logf("error cleaning rules: %v", err)
+		}
 		cancel()
 		r.stop()
-	})
-
-	is.True(run(t, "docker", "compose", "-f=testdata/docker-compose.yml", "up", "-d") == 0)
-	t.Cleanup(func() {
-		run(t, "docker", "compose", "-f=testdata/docker-compose.yml", "down")
 	})
 
 	// wait until whalewall has created firewall rules
