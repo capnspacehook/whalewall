@@ -22,4 +22,4 @@ jobs:
       # interface with nftables, which is a privileged operation
       - run: |
           go test -c -race -o whalewall.test
-          sudo ./whalewall.test -test.v -test.failfast
+          sudo ./whalewall.test -test.v -test.failfast -test.run Integration
