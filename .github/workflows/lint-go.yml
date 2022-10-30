@@ -1,0 +1,101 @@
+name: Lint Go
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - "*"
+
+  workflow_dispatch: {}
+
+env:
+  GO_VERSION: "1.19"
+
+jobs:
+  check-mod-tidy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: ${{ env.GO_VERSION }}.x
+          check-latest: true
+          cache: true
+
+      - name: Ensure go.mod was tidied
+        run: |
+          go mod tidy -compat ${{ env.GO_VERSION }}
+          STATUS=$(git status --porcelain go.mod go.sum)
+          if [ -n "$STATUS" ]; then
+            echo "Running go mod tidy modified go.mod and/or go.sum"
+            exit 1
+          fi
+          exit 0
+
+  check-go-generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: ${{ env.GO_VERSION }}.x
+          check-latest: true
+          cache: true
+
+      - run: |
+          go install github.com/kyleconroy/sqlc/cmd/sqlc@latest
+
+      - name: Ensure 'go generate' is clean
+        run: |
+          go generate "$(go list ./...)"
+          echo
+          echo
+          
+          if ! git diff --name-only --exit-code; then
+            echo "The files above need updating. Please run 'go generate'."
+            exit 1
+          fi
+
+  staticcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: ${{ env.GO_VERSION }}.x
+          check-latest: true
+          cache: true
+
+      - name: Lint with staticcheck
+        uses: dominikh/staticcheck-action@v1.2.0
+        with:
+          install-go: false
+
+  golangci-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: ${{ env.GO_VERSION }}.x
+          check-latest: true
+          cache: true
+
+      - name: Lint with golangci-lint
+        uses: golangci/golangci-lint-action@v3.3.0
+        with:
+          only-new-issues: true

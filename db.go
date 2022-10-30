@@ -9,6 +9,8 @@ import (
 	"github.com/capnspacehook/whalewall/database"
 )
 
+//go:generate sqlc generate
+
 func (r *ruleManager) addContainer(ctx context.Context, logger *zap.Logger, id, name, service string, addrs map[string][]byte, estContainers map[string]struct{}) error {
 	tx, err := r.db.Begin(ctx, logger)
 	if err != nil {

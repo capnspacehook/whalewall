@@ -12,14 +12,16 @@ linters:
     - errorlint
     - forcetypeassert
     - gocritic
-    - goimports
+    - gofumpt
     - gosimple
     - govet
     - ineffassign
+    - loggercheck
     - misspell
     - nilerr
     - nilnil
     - prealloc
+    - predeclared
     - reassign
     - revive
     - unconvert
