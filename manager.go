@@ -153,6 +153,9 @@ func (r *ruleManager) init(ctx context.Context, dataDir string) error {
 	if err != nil {
 		return fmt.Errorf("error creating docker client: %w", err)
 	}
+	if _, err := r.dockerCli.Ping(ctx); err != nil {
+		return fmt.Errorf("error connecting to docker daemon: %w", err)
+	}
 
 	return nil
 }
