@@ -1,0 +1,53 @@
+env:
+  - COSIGN_EXPERIMENTAL=true
+
+changelog:
+  use: github
+  sort: asc
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+      - GO111MODULE=on
+    goos:
+      - linux
+    goarch:
+      - amd64
+    flags:
+      - -buildmode=pie
+      - -buildvcs=true
+      - -trimpath
+    mod_timestamp: '{{ .CommitTimestamp }}'
+    ldflags:
+      - -s -w -X "main.version={{ .Tag }}"
+
+archives:
+  - id: binary-archive
+    name_template: "{{ .ProjectName }}"
+    format: binary
+  - id: tar-archive
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format: tar.gz
+    # hack to only add binary to archive
+    files:
+      - none*
+
+checksum:
+  name_template: "checksums.txt"
+  ids:
+    - binary-archive
+    - tar-archive
+
+signs:
+  - id: checksum-signature
+    cmd: cosign
+    certificate: "${artifact}.crt"
+    args: ["sign-blob", "--output-signature", "${signature}", "--output-certificate", "${certificate}", "${artifact}"]
+    artifacts: checksum
+
+release:
+  ids:
+    - checksum-signature
+    - tar-archive
+  prerelease: auto
+  name_template: "{{ .Tag }}"
