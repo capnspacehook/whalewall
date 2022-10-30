@@ -7,7 +7,7 @@ import (
 	"text/tabwriter"
 )
 
-var version string
+var version = "devel"
 
 func printVersionInfo(info *debug.BuildInfo) {
 	fmt.Printf("Whalewall %s\n\n", version)

@@ -28,6 +28,7 @@ func init() {
 	flag.StringVar(&logPath, "l", "stdout", "path to log to")
 	flag.BoolVar(&displayVersion, "version", false, "print version and build information and exit")
 }
+
 func main() {
 	os.Exit(mainRetCode())
 }
@@ -37,12 +38,10 @@ func mainRetCode() int {
 
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
-		log.Fatal("build information not found")
+		log.Println("build information not found")
+		return 1
 	}
 
-	if version == "" {
-		version = "devel"
-	}
 	if displayVersion {
 		printVersionInfo(info)
 		return 0
