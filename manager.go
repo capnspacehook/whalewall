@@ -167,7 +167,7 @@ func (r *ruleManager) initDB(ctx context.Context, dataDir string) error {
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			r.logger.Info("creating data directory", zap.String("data.dir", dataDir))
-			if err := os.MkdirAll(dataDir, 0750); err != nil {
+			if err := os.MkdirAll(dataDir, 0o750); err != nil {
 				return fmt.Errorf("error creating data directory: %w", err)
 			}
 		} else {
