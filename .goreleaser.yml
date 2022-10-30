@@ -2,7 +2,7 @@ env:
   - COSIGN_EXPERIMENTAL=true
 
 changelog:
-  use: github
+  use: github-native
   sort: asc
 
 builds:
