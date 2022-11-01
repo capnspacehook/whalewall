@@ -35,6 +35,7 @@ var (
 		KeyType:  nftables.TypeIPAddr,
 		DataType: nftables.TypeVerdict,
 	}
+
 	srcJumpRule = &nftables.Rule{
 		Table: filterTable,
 		Chain: whalewallChain,

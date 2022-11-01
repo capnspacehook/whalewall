@@ -55,9 +55,10 @@ var (
 	}
 )
 
+// createRules adds nftables rules for started containers.
 func (r *ruleManager) createRules(ctx context.Context) {
 	for container := range r.createCh {
-		if err := r.createRule(ctx, container); err != nil {
+		if err := r.createContainerRules(ctx, container); err != nil {
 			if errors.Is(err, errShuttingDown) {
 				return
 			}
@@ -70,7 +71,8 @@ func (r *ruleManager) createRules(ctx context.Context) {
 	}
 }
 
-func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJSON) error {
+// createContainerRules adds nftables rules for a container.
+func (r *ruleManager) createContainerRules(ctx context.Context, container types.ContainerJSON) error {
 	contName := stripName(container.Name)
 	logger := r.logger.With(zap.String("container.id", container.ID[:12]), zap.String("container.name", contName))
 
@@ -201,7 +203,7 @@ func (r *ruleManager) createRule(ctx context.Context, container types.ContainerJ
 	return r.addContainer(ctx, logger, container.ID, contName, service, addrs, estContainers)
 }
 
-// container name appears with prefix "/"
+// stripName removes the leading "/" from a container name if necessary.
 func stripName(name string) string {
 	if len(name) > 0 && name[0] == '/' {
 		name = name[1:]
@@ -209,6 +211,8 @@ func stripName(name string) string {
 	return name
 }
 
+// populateOutputRules attempts to find the IPs of containers specified
+// in output rules and fills the rules appropriately.
 func (r *ruleManager) populateOutputRules(ctx context.Context, cfg config, project string, addrs map[string][]byte, estContainers map[string]struct{}) error {
 	// only get a list of containers if at least one rule specifies a
 	// container
@@ -324,6 +328,10 @@ func (r *ruleManager) populateOutputRules(ctx context.Context, cfg config, proje
 	return nil
 }
 
+// findNetwork attempts to find a given Docker network, returning the
+// name the network was found by if possible. Docker Compose sometimes
+// prepends the name of the Compose project to the name the user originally
+// gave the network.
 func findNetwork[T any](network, project string, addrs map[string]T) (string, T, bool) {
 	var zero T
 	netNames := []string{
@@ -340,6 +348,8 @@ func findNetwork[T any](network, project string, addrs map[string]T) (string, T,
 	return "", zero, false
 }
 
+// containerNameMatches returns true if a canonical container name can
+// be found from a combination of labels and names.
 func containerNameMatches(expectedName string, labels map[string]string, names ...string) bool {
 	if len(expectedName) == 0 {
 		return false
@@ -359,7 +369,7 @@ func containerNameMatches(expectedName string, labels map[string]string, names .
 	if slashPrefix {
 		expectedName = expectedName[1:]
 	}
-	// check if the docker compose service name matches
+	// check if the Docker Compose service name matches
 	if serviceName, ok := labels[composeServiceLabel]; ok && serviceName == expectedName {
 		return true
 	}
@@ -367,6 +377,11 @@ func containerNameMatches(expectedName string, labels map[string]string, names .
 	return false
 }
 
+// processRequiredContainers creates rules for newly started containers,
+// and returns when either a container named contName is processed, or
+// waiting for a container start event times out. This is necessary when
+// creating rules for a container that depends on another container which
+// isn't started yet.
 func (r *ruleManager) processRequiredContainers(ctx context.Context, contName string) (bool, error) {
 	found := false
 	timer := time.NewTimer(containerStartTimeout)
@@ -381,7 +396,7 @@ func (r *ruleManager) processRequiredContainers(ctx context.Context, contName st
 				<-timer.C
 			}
 
-			if err := r.createRule(ctx, c); err != nil {
+			if err := r.createContainerRules(ctx, c); err != nil {
 				return false, err
 			}
 
@@ -404,6 +419,8 @@ func buildChainName(name, id string) string {
 	return fmt.Sprintf("%s%s-%s", chainPrefix, name, id[:12])
 }
 
+// createPortMappingRules adds nftables rules to allow or deny access to
+// mapped ports.
 func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types.ContainerJSON, contName string, mappedPortsCfg mappedPorts, addrs map[string][]byte, chain *nftables.Chain, nftRules []*nftables.Rule) ([]*nftables.Rule, []*nftables.Rule, error) {
 	// check if there are any mapped ports to create rules for
 	var hasMappedPorts bool
@@ -565,6 +582,8 @@ func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types
 	return nftRules, hostRules, nil
 }
 
+// createOutputRules adds nftables rules to allow outbound access from
+// a container.
 func (r *ruleManager) createOutputRules(ctx context.Context, ruleCfgs []ruleConfig, project string, addrs map[string][]byte, chain *nftables.Chain, name, id string, nftRules []*nftables.Rule) ([]*nftables.Rule, error) {
 	for _, ruleCfg := range ruleCfgs {
 		// prepend container name and ID to log prefixes
@@ -626,6 +645,8 @@ func (r *ruleManager) createOutputRules(ctx context.Context, ruleCfgs []ruleConf
 	return nftRules, nil
 }
 
+// getContainerIDAndName returns the ID and canonical name of a container
+// if it is present in the database.
 func (r *ruleManager) getContainerIDAndName(ctx context.Context, contName string) (string, string, error) {
 	name := contName
 
@@ -665,6 +686,7 @@ type ruleDetails struct {
 	contID   string
 }
 
+// createNFTRules returns a slice of [*nftables.Rule] described by rd.
 func (r *ruleManager) createNFTRules(rd ruleDetails) []*nftables.Rule {
 	r.logger.Sugar().Debugf("creating rule: %#v", rd)
 

@@ -82,6 +82,7 @@ func runCmd(t *testing.T, container, command string) int {
 		"compose",
 		"-f=testdata/docker-compose.yml",
 		"exec",
+		"-T",
 		container,
 		"sh",
 		"-c",
@@ -1299,7 +1300,7 @@ mapped_ports:
 			})
 
 			// create rules
-			err := r.createRule(context.Background(), tt.container)
+			err := r.createContainerRules(context.Background(), tt.container)
 			is.NoErr(err)
 
 			// TODO: create rules in network namespace

@@ -8,6 +8,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// findRule returns true if rule is contained within rules. If rule is
+// found, its Position and Handle will be set to match its counterpart
+// in rules.
 func findRule(logger *zap.Logger, rule *nftables.Rule, rules []*nftables.Rule) bool {
 	for i := range rules {
 		if rulesEqual(logger, rule, rules[i]) {
@@ -20,6 +23,8 @@ func findRule(logger *zap.Logger, rule *nftables.Rule, rules []*nftables.Rule) b
 	return false
 }
 
+// rulesEqual returns true if r1 and r2 are semantically equal to one
+// another.
 func rulesEqual(logger *zap.Logger, r1, r2 *nftables.Rule) bool {
 	if len(r1.Exprs) != len(r2.Exprs) {
 		return false
