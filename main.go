@@ -17,29 +17,17 @@ import (
 
 const defaultTimeout = 10 * time.Second
 
-var (
-	clear          bool
-	dataDir        string
-	debugLogs      bool
-	logPath        string
-	timeout        time.Duration
-	displayVersion bool
-)
-
-func init() {
-	flag.BoolVar(&clear, "clear", false, "remove all firewall rules created by whalewall")
-	flag.StringVar(&dataDir, "d", ".", "directory to store state in")
-	flag.BoolVar(&debugLogs, "debug", false, "enable debug logging")
-	flag.StringVar(&logPath, "l", "stdout", "path to log to")
-	flag.DurationVar(&timeout, "t", defaultTimeout, "timeout for Docker API requests")
-	flag.BoolVar(&displayVersion, "version", false, "print version and build information and exit")
-}
-
 func main() {
 	os.Exit(mainRetCode())
 }
 
 func mainRetCode() int {
+	clear := flag.Bool("clear", false, "remove all firewall rules created by whalewall")
+	dataDir := flag.String("d", ".", "directory to store state in")
+	debugLogs := flag.Bool("debug", false, "enable debug logging")
+	logPath := flag.String("l", "stdout", "path to log to")
+	timeout := flag.Duration("t", defaultTimeout, "timeout for Docker API requests")
+	displayVersion := flag.Bool("version", false, "print version and build information and exit")
 	flag.Parse()
 
 	info, ok := debug.ReadBuildInfo()
@@ -48,15 +36,15 @@ func mainRetCode() int {
 		return 1
 	}
 
-	if displayVersion {
+	if *displayVersion {
 		printVersionInfo(info)
 		return 0
 	}
 
 	// build logger
 	logCfg := zap.NewProductionConfig()
-	logCfg.OutputPaths = []string{logPath}
-	if debugLogs {
+	logCfg.OutputPaths = []string{*logPath}
+	if *debugLogs {
 		logCfg.Level.SetLevel(zap.DebugLevel)
 	}
 	logCfg.EncoderConfig.TimeKey = "time"
@@ -75,12 +63,12 @@ func mainRetCode() int {
 	firewallCreator := func() (firewallClient, error) {
 		return nftables.New()
 	}
-	r := newRuleManager(logger, timeout, firewallCreator)
+	r := newRuleManager(logger, *timeout, firewallCreator)
 
 	// remove all created firewall rules if the user asked to clear
-	if clear {
+	if *clear {
 		logger.Info("clearing rules")
-		if err := r.clear(ctx, dataDir); err != nil {
+		if err := r.clear(ctx, *dataDir); err != nil {
 			logger.Error("error clearing rules", zap.Error(err))
 			return 1
 		}
@@ -100,7 +88,7 @@ func mainRetCode() int {
 	logger.Info("starting whalewall", versionFields...)
 
 	// start managing firewall rules
-	if err = r.start(ctx, dataDir); err != nil {
+	if err = r.start(ctx, *dataDir); err != nil {
 		logger.Error("error starting", zap.Error(err))
 		return 1
 	}
