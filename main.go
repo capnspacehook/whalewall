@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/docker/docker/client"
 	"github.com/google/nftables"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -60,10 +61,13 @@ func mainRetCode() int {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	dockerCreator := func() (dockerClient, error) {
+		return client.NewClientWithOpts(client.FromEnv)
+	}
 	firewallCreator := func() (firewallClient, error) {
 		return nftables.New()
 	}
-	r := newRuleManager(logger, *timeout, firewallCreator)
+	r := newRuleManager(logger, *timeout, dockerCreator, firewallCreator)
 
 	// remove all created firewall rules if the user asked to clear
 	if *clear {

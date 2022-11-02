@@ -13,6 +13,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/nftables"
@@ -34,10 +35,13 @@ func TestIntegration(t *testing.T) {
 	logger, err := zap.NewDevelopment()
 	is.NoErr(err)
 
+	dockerCreator := func() (dockerClient, error) {
+		return client.NewClientWithOpts(client.FromEnv)
+	}
 	firewallCreator := func() (firewallClient, error) {
 		return nftables.New()
 	}
-	r := newRuleManager(logger, defaultTimeout, firewallCreator)
+	r := newRuleManager(logger, defaultTimeout, dockerCreator, firewallCreator)
 	ctx, cancel := context.WithCancel(context.Background())
 	err = r.start(ctx, t.TempDir())
 	is.NoErr(err)
@@ -126,26 +130,28 @@ func TestRuleCreation(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		container     types.ContainerJSON
+		containers    []types.ContainerJSON
 		expectedRules map[*nftables.Chain][]*nftables.Rule
 	}{
 		{
 			name: "deny all",
-			container: types.ContainerJSON{
-				ContainerJSONBase: &types.ContainerJSONBase{
-					ID:   cont1ID,
-					Name: "/" + cont1Name,
-				},
-				Config: &container.Config{
-					Labels: map[string]string{
-						enabledLabel: "true",
+			containers: []types.ContainerJSON{
+				{
+					ContainerJSONBase: &types.ContainerJSONBase{
+						ID:   cont1ID,
+						Name: "/" + cont1Name,
 					},
-				},
-				NetworkSettings: &types.NetworkSettings{
-					Networks: map[string]*network.EndpointSettings{
-						"default": {
-							Gateway:   gatewayAddr.String(),
-							IPAddress: cont1Addr.String(),
+					Config: &container.Config{
+						Labels: map[string]string{
+							enabledLabel: "true",
+						},
+					},
+					NetworkSettings: &types.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"default": {
+								Gateway:   gatewayAddr.String(),
+								IPAddress: cont1Addr.String(),
+							},
 						},
 					},
 				},
@@ -167,25 +173,27 @@ func TestRuleCreation(t *testing.T) {
 		},
 		{
 			name: "allow HTTPS outbound",
-			container: types.ContainerJSON{
-				ContainerJSONBase: &types.ContainerJSONBase{
-					ID:   cont1ID,
-					Name: "/" + cont1Name,
-				},
-				Config: &container.Config{
-					Labels: map[string]string{
-						enabledLabel: "true",
-						rulesLabel: `
+			containers: []types.ContainerJSON{
+				{
+					ContainerJSONBase: &types.ContainerJSONBase{
+						ID:   cont1ID,
+						Name: "/" + cont1Name,
+					},
+					Config: &container.Config{
+						Labels: map[string]string{
+							enabledLabel: "true",
+							rulesLabel: `
 output:
   - proto: tcp
     port: 443`,
+						},
 					},
-				},
-				NetworkSettings: &types.NetworkSettings{
-					Networks: map[string]*network.EndpointSettings{
-						"default": {
-							Gateway:   gatewayAddr.String(),
-							IPAddress: cont1Addr.String(),
+					NetworkSettings: &types.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"default": {
+								Gateway:   gatewayAddr.String(),
+								IPAddress: cont1Addr.String(),
+							},
 						},
 					},
 				},
@@ -233,26 +241,28 @@ output:
 		},
 		{
 			name: "allow HTTPS outbound to 1.1.1.1",
-			container: types.ContainerJSON{
-				ContainerJSONBase: &types.ContainerJSONBase{
-					ID:   cont1ID,
-					Name: "/" + cont1Name,
-				},
-				Config: &container.Config{
-					Labels: map[string]string{
-						enabledLabel: "true",
-						rulesLabel: `
+			containers: []types.ContainerJSON{
+				{
+					ContainerJSONBase: &types.ContainerJSONBase{
+						ID:   cont1ID,
+						Name: "/" + cont1Name,
+					},
+					Config: &container.Config{
+						Labels: map[string]string{
+							enabledLabel: "true",
+							rulesLabel: `
 output:
   - ip: 1.1.1.1
     proto: tcp
     port: 443`,
+						},
 					},
-				},
-				NetworkSettings: &types.NetworkSettings{
-					Networks: map[string]*network.EndpointSettings{
-						"default": {
-							Gateway:   gatewayAddr.String(),
-							IPAddress: cont1Addr.String(),
+					NetworkSettings: &types.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"default": {
+								Gateway:   gatewayAddr.String(),
+								IPAddress: cont1Addr.String(),
+							},
 						},
 					},
 				},
@@ -302,26 +312,28 @@ output:
 		},
 		{
 			name: "allow DNS outbound to 192.168.1.0/24",
-			container: types.ContainerJSON{
-				ContainerJSONBase: &types.ContainerJSONBase{
-					ID:   cont1ID,
-					Name: "/" + cont1Name,
-				},
-				Config: &container.Config{
-					Labels: map[string]string{
-						enabledLabel: "true",
-						rulesLabel: `
+			containers: []types.ContainerJSON{
+				{
+					ContainerJSONBase: &types.ContainerJSONBase{
+						ID:   cont1ID,
+						Name: "/" + cont1Name,
+					},
+					Config: &container.Config{
+						Labels: map[string]string{
+							enabledLabel: "true",
+							rulesLabel: `
 output:
   - ip: 192.168.1.0/24
     proto: udp
     port: 53`,
+						},
 					},
-				},
-				NetworkSettings: &types.NetworkSettings{
-					Networks: map[string]*network.EndpointSettings{
-						"default": {
-							Gateway:   gatewayAddr.String(),
-							IPAddress: cont1Addr.String(),
+					NetworkSettings: &types.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"default": {
+								Gateway:   gatewayAddr.String(),
+								IPAddress: cont1Addr.String(),
+							},
 						},
 					},
 				},
@@ -371,26 +383,28 @@ output:
 		},
 		{
 			name: "verdict with log prefix",
-			container: types.ContainerJSON{
-				ContainerJSONBase: &types.ContainerJSONBase{
-					ID:   cont1ID,
-					Name: "/" + cont1Name,
-				},
-				Config: &container.Config{
-					Labels: map[string]string{
-						enabledLabel: "true",
-						rulesLabel: `
+			containers: []types.ContainerJSON{
+				{
+					ContainerJSONBase: &types.ContainerJSONBase{
+						ID:   cont1ID,
+						Name: "/" + cont1Name,
+					},
+					Config: &container.Config{
+						Labels: map[string]string{
+							enabledLabel: "true",
+							rulesLabel: `
 output:
   - log_prefix: "logger pfx"
     proto: tcp
     port: 443`,
+						},
 					},
-				},
-				NetworkSettings: &types.NetworkSettings{
-					Networks: map[string]*network.EndpointSettings{
-						"default": {
-							Gateway:   gatewayAddr.String(),
-							IPAddress: cont1Addr.String(),
+					NetworkSettings: &types.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"default": {
+								Gateway:   gatewayAddr.String(),
+								IPAddress: cont1Addr.String(),
+							},
 						},
 					},
 				},
@@ -452,27 +466,29 @@ output:
 		},
 		{
 			name: "verdict with queue",
-			container: types.ContainerJSON{
-				ContainerJSONBase: &types.ContainerJSONBase{
-					ID:   cont1ID,
-					Name: "/" + cont1Name,
-				},
-				Config: &container.Config{
-					Labels: map[string]string{
-						enabledLabel: "true",
-						rulesLabel: `
+			containers: []types.ContainerJSON{
+				{
+					ContainerJSONBase: &types.ContainerJSONBase{
+						ID:   cont1ID,
+						Name: "/" + cont1Name,
+					},
+					Config: &container.Config{
+						Labels: map[string]string{
+							enabledLabel: "true",
+							rulesLabel: `
 output:
   - proto: tcp
     port: 443
     verdict:
       queue: 1000`,
+						},
 					},
-				},
-				NetworkSettings: &types.NetworkSettings{
-					Networks: map[string]*network.EndpointSettings{
-						"default": {
-							Gateway:   gatewayAddr.String(),
-							IPAddress: cont1Addr.String(),
+					NetworkSettings: &types.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"default": {
+								Gateway:   gatewayAddr.String(),
+								IPAddress: cont1Addr.String(),
+							},
 						},
 					},
 				},
@@ -535,15 +551,16 @@ output:
 		},
 		{
 			name: "verdict with queue and est queues",
-			container: types.ContainerJSON{
-				ContainerJSONBase: &types.ContainerJSONBase{
-					ID:   cont1ID,
-					Name: "/" + cont1Name,
-				},
-				Config: &container.Config{
-					Labels: map[string]string{
-						enabledLabel: "true",
-						rulesLabel: `
+			containers: []types.ContainerJSON{
+				{
+					ContainerJSONBase: &types.ContainerJSONBase{
+						ID:   cont1ID,
+						Name: "/" + cont1Name,
+					},
+					Config: &container.Config{
+						Labels: map[string]string{
+							enabledLabel: "true",
+							rulesLabel: `
 output:
   - proto: tcp
     port: 443
@@ -551,13 +568,14 @@ output:
       queue: 1000
       input_est_queue: 1001
       output_est_queue: 1002`,
+						},
 					},
-				},
-				NetworkSettings: &types.NetworkSettings{
-					Networks: map[string]*network.EndpointSettings{
-						"default": {
-							Gateway:   gatewayAddr.String(),
-							IPAddress: cont1Addr.String(),
+					NetworkSettings: &types.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"default": {
+								Gateway:   gatewayAddr.String(),
+								IPAddress: cont1Addr.String(),
+							},
 						},
 					},
 				},
@@ -624,15 +642,16 @@ output:
 		},
 		{
 			name: "verdict with queue and same output est queue",
-			container: types.ContainerJSON{
-				ContainerJSONBase: &types.ContainerJSONBase{
-					ID:   cont1ID,
-					Name: "/" + cont1Name,
-				},
-				Config: &container.Config{
-					Labels: map[string]string{
-						enabledLabel: "true",
-						rulesLabel: `
+			containers: []types.ContainerJSON{
+				{
+					ContainerJSONBase: &types.ContainerJSONBase{
+						ID:   cont1ID,
+						Name: "/" + cont1Name,
+					},
+					Config: &container.Config{
+						Labels: map[string]string{
+							enabledLabel: "true",
+							rulesLabel: `
 output:
   - proto: tcp
     port: 443
@@ -640,13 +659,14 @@ output:
       queue: 1000
       input_est_queue: 1001
       output_est_queue: 1000`,
+						},
 					},
-				},
-				NetworkSettings: &types.NetworkSettings{
-					Networks: map[string]*network.EndpointSettings{
-						"default": {
-							Gateway:   gatewayAddr.String(),
-							IPAddress: cont1Addr.String(),
+					NetworkSettings: &types.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"default": {
+								Gateway:   gatewayAddr.String(),
+								IPAddress: cont1Addr.String(),
+							},
 						},
 					},
 				},
@@ -698,49 +718,51 @@ output:
 		},
 		{
 			name: "allow external access to mapped ports",
-			container: types.ContainerJSON{
-				ContainerJSONBase: &types.ContainerJSONBase{
-					ID:   cont1ID,
-					Name: "/" + cont1Name,
-				},
-				Config: &container.Config{
-					Labels: map[string]string{
-						enabledLabel: "true",
-						rulesLabel: `
+			containers: []types.ContainerJSON{
+				{
+					ContainerJSONBase: &types.ContainerJSONBase{
+						ID:   cont1ID,
+						Name: "/" + cont1Name,
+					},
+					Config: &container.Config{
+						Labels: map[string]string{
+							enabledLabel: "true",
+							rulesLabel: `
 mapped_ports:
   external:
     allow: true`,
+						},
 					},
-				},
-				NetworkSettings: &types.NetworkSettings{
-					NetworkSettingsBase: types.NetworkSettingsBase{
-						Ports: nat.PortMap{
-							"80/tcp": []nat.PortBinding{
-								{
-									HostIP:   "0.0.0.0",
-									HostPort: "80",
+					NetworkSettings: &types.NetworkSettings{
+						NetworkSettingsBase: types.NetworkSettingsBase{
+							Ports: nat.PortMap{
+								"80/tcp": []nat.PortBinding{
+									{
+										HostIP:   "0.0.0.0",
+										HostPort: "80",
+									},
+									{
+										HostIP:   "::",
+										HostPort: "80",
+									},
 								},
-								{
-									HostIP:   "::",
-									HostPort: "80",
-								},
-							},
-							"53/udp": []nat.PortBinding{
-								{
-									HostIP:   "0.0.0.0",
-									HostPort: "5533",
-								},
-								{
-									HostIP:   "::",
-									HostPort: "5533",
+								"53/udp": []nat.PortBinding{
+									{
+										HostIP:   "0.0.0.0",
+										HostPort: "5533",
+									},
+									{
+										HostIP:   "::",
+										HostPort: "5533",
+									},
 								},
 							},
 						},
-					},
-					Networks: map[string]*network.EndpointSettings{
-						"default": {
-							Gateway:   gatewayAddr.String(),
-							IPAddress: cont1Addr.String(),
+						Networks: map[string]*network.EndpointSettings{
+							"default": {
+								Gateway:   gatewayAddr.String(),
+								IPAddress: cont1Addr.String(),
+							},
 						},
 					},
 				},
@@ -873,50 +895,52 @@ mapped_ports:
 
 		{
 			name: "allow access from 192.168.1.0/24 to mapped ports",
-			container: types.ContainerJSON{
-				ContainerJSONBase: &types.ContainerJSONBase{
-					ID:   cont1ID,
-					Name: "/" + cont1Name,
-				},
-				Config: &container.Config{
-					Labels: map[string]string{
-						enabledLabel: "true",
-						rulesLabel: `
+			containers: []types.ContainerJSON{
+				{
+					ContainerJSONBase: &types.ContainerJSONBase{
+						ID:   cont1ID,
+						Name: "/" + cont1Name,
+					},
+					Config: &container.Config{
+						Labels: map[string]string{
+							enabledLabel: "true",
+							rulesLabel: `
 mapped_ports:
   external:
     allow: true
     ip: 192.168.1.0/24`,
+						},
 					},
-				},
-				NetworkSettings: &types.NetworkSettings{
-					NetworkSettingsBase: types.NetworkSettingsBase{
-						Ports: nat.PortMap{
-							"80/tcp": []nat.PortBinding{
-								{
-									HostIP:   "0.0.0.0",
-									HostPort: "8080",
+					NetworkSettings: &types.NetworkSettings{
+						NetworkSettingsBase: types.NetworkSettingsBase{
+							Ports: nat.PortMap{
+								"80/tcp": []nat.PortBinding{
+									{
+										HostIP:   "0.0.0.0",
+										HostPort: "8080",
+									},
+									{
+										HostIP:   "::",
+										HostPort: "8080",
+									},
 								},
-								{
-									HostIP:   "::",
-									HostPort: "8080",
-								},
-							},
-							"53/udp": []nat.PortBinding{
-								{
-									HostIP:   "0.0.0.0",
-									HostPort: "5533",
-								},
-								{
-									HostIP:   "::",
-									HostPort: "5533",
+								"53/udp": []nat.PortBinding{
+									{
+										HostIP:   "0.0.0.0",
+										HostPort: "5533",
+									},
+									{
+										HostIP:   "::",
+										HostPort: "5533",
+									},
 								},
 							},
 						},
-					},
-					Networks: map[string]*network.EndpointSettings{
-						"default": {
-							Gateway:   gatewayAddr.String(),
-							IPAddress: cont1Addr.String(),
+						Networks: map[string]*network.EndpointSettings{
+							"default": {
+								Gateway:   gatewayAddr.String(),
+								IPAddress: cont1Addr.String(),
+							},
 						},
 					},
 				},
@@ -1022,35 +1046,37 @@ mapped_ports:
 		},
 		{
 			name: "allow localhost access to mapped ports",
-			container: types.ContainerJSON{
-				ContainerJSONBase: &types.ContainerJSONBase{
-					ID:   cont1ID,
-					Name: "/" + cont1Name,
-				},
-				Config: &container.Config{
-					Labels: map[string]string{
-						enabledLabel: "true",
-						rulesLabel: `
+			containers: []types.ContainerJSON{
+				{
+					ContainerJSONBase: &types.ContainerJSONBase{
+						ID:   cont1ID,
+						Name: "/" + cont1Name,
+					},
+					Config: &container.Config{
+						Labels: map[string]string{
+							enabledLabel: "true",
+							rulesLabel: `
 mapped_ports:
   localhost:
     allow: true`,
+						},
 					},
-				},
-				NetworkSettings: &types.NetworkSettings{
-					NetworkSettingsBase: types.NetworkSettingsBase{
-						Ports: nat.PortMap{
-							"443/udp": []nat.PortBinding{
-								{
-									HostIP:   "0.0.0.0",
-									HostPort: "8443",
+					NetworkSettings: &types.NetworkSettings{
+						NetworkSettingsBase: types.NetworkSettingsBase{
+							Ports: nat.PortMap{
+								"443/udp": []nat.PortBinding{
+									{
+										HostIP:   "0.0.0.0",
+										HostPort: "8443",
+									},
 								},
 							},
 						},
-					},
-					Networks: map[string]*network.EndpointSettings{
-						"default": {
-							Gateway:   gatewayAddr.String(),
-							IPAddress: cont1Addr.String(),
+						Networks: map[string]*network.EndpointSettings{
+							"default": {
+								Gateway:   gatewayAddr.String(),
+								IPAddress: cont1Addr.String(),
+							},
 						},
 					},
 				},
@@ -1100,37 +1126,39 @@ mapped_ports:
 		},
 		{
 			name: "allow localhost access to mapped ports with queue",
-			container: types.ContainerJSON{
-				ContainerJSONBase: &types.ContainerJSONBase{
-					ID:   cont1ID,
-					Name: "/" + cont1Name,
-				},
-				Config: &container.Config{
-					Labels: map[string]string{
-						enabledLabel: "true",
-						rulesLabel: `
+			containers: []types.ContainerJSON{
+				{
+					ContainerJSONBase: &types.ContainerJSONBase{
+						ID:   cont1ID,
+						Name: "/" + cont1Name,
+					},
+					Config: &container.Config{
+						Labels: map[string]string{
+							enabledLabel: "true",
+							rulesLabel: `
 mapped_ports:
   localhost:
     allow: true
     verdict:
       queue: 1000`,
+						},
 					},
-				},
-				NetworkSettings: &types.NetworkSettings{
-					NetworkSettingsBase: types.NetworkSettingsBase{
-						Ports: nat.PortMap{
-							"443/udp": []nat.PortBinding{
-								{
-									HostIP:   "0.0.0.0",
-									HostPort: "8443",
+					NetworkSettings: &types.NetworkSettings{
+						NetworkSettingsBase: types.NetworkSettingsBase{
+							Ports: nat.PortMap{
+								"443/udp": []nat.PortBinding{
+									{
+										HostIP:   "0.0.0.0",
+										HostPort: "8443",
+									},
 								},
 							},
 						},
-					},
-					Networks: map[string]*network.EndpointSettings{
-						"default": {
-							Gateway:   gatewayAddr.String(),
-							IPAddress: cont1Addr.String(),
+						Networks: map[string]*network.EndpointSettings{
+							"default": {
+								Gateway:   gatewayAddr.String(),
+								IPAddress: cont1Addr.String(),
+							},
 						},
 					},
 				},
@@ -1196,15 +1224,16 @@ mapped_ports:
 		},
 		{
 			name: "allow localhost access to mapped ports with same input est queue",
-			container: types.ContainerJSON{
-				ContainerJSONBase: &types.ContainerJSONBase{
-					ID:   cont1ID,
-					Name: "/" + cont1Name,
-				},
-				Config: &container.Config{
-					Labels: map[string]string{
-						enabledLabel: "true",
-						rulesLabel: `
+			containers: []types.ContainerJSON{
+				{
+					ContainerJSONBase: &types.ContainerJSONBase{
+						ID:   cont1ID,
+						Name: "/" + cont1Name,
+					},
+					Config: &container.Config{
+						Labels: map[string]string{
+							enabledLabel: "true",
+							rulesLabel: `
 mapped_ports:
   localhost:
     allow: true
@@ -1212,23 +1241,24 @@ mapped_ports:
       queue: 1000
       input_est_queue: 1000
       output_est_queue: 1001`,
+						},
 					},
-				},
-				NetworkSettings: &types.NetworkSettings{
-					NetworkSettingsBase: types.NetworkSettingsBase{
-						Ports: nat.PortMap{
-							"443/udp": []nat.PortBinding{
-								{
-									HostIP:   "0.0.0.0",
-									HostPort: "8443",
+					NetworkSettings: &types.NetworkSettings{
+						NetworkSettingsBase: types.NetworkSettingsBase{
+							Ports: nat.PortMap{
+								"443/udp": []nat.PortBinding{
+									{
+										HostIP:   "0.0.0.0",
+										HostPort: "8443",
+									},
 								},
 							},
 						},
-					},
-					Networks: map[string]*network.EndpointSettings{
-						"default": {
-							Gateway:   gatewayAddr.String(),
-							IPAddress: cont1Addr.String(),
+						Networks: map[string]*network.EndpointSettings{
+							"default": {
+								Gateway:   gatewayAddr.String(),
+								IPAddress: cont1Addr.String(),
+							},
 						},
 					},
 				},
@@ -1305,10 +1335,13 @@ mapped_ports:
 			})
 			is.NoErr(mfc.Flush())
 
+			dockerCreator := func() (dockerClient, error) {
+				return newMockDockerClient(tt.containers), nil
+			}
 			firewallCreator := func() (firewallClient, error) {
 				return mfc, nil
 			}
-			r := newRuleManager(zap.NewNop(), defaultTimeout, firewallCreator)
+			r := newRuleManager(zap.NewNop(), defaultTimeout, dockerCreator, firewallCreator)
 
 			// create new database and base rules
 			err = r.init(context.Background(), t.TempDir())
@@ -1321,8 +1354,10 @@ mapped_ports:
 			})
 
 			// create rules
-			err := r.createContainerRules(context.Background(), tt.container)
-			is.NoErr(err)
+			for _, c := range tt.containers {
+				err := r.createContainerRules(context.Background(), c)
+				is.NoErr(err)
+			}
 
 			// check that created rules are what is expected
 			for chain, expectedRules := range tt.expectedRules {

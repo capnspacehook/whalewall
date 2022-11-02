@@ -42,24 +42,29 @@ type ruleManager struct {
 	wg   sync.WaitGroup
 	done chan struct{}
 
-	logger            *zap.Logger
-	timeout           time.Duration
+	logger  *zap.Logger
+	timeout time.Duration
+
+	newDockerClient   dockerClientCreator
 	newFirewallClient firewallClientCreator
 
 	createCh chan types.ContainerJSON
 	deleteCh chan string
 
 	db        *database.DB
-	dockerCli *client.Client
+	dockerCli dockerClient
 }
+
+type dockerClientCreator func() (dockerClient, error)
 
 type firewallClientCreator func() (firewallClient, error)
 
-func newRuleManager(logger *zap.Logger, timeout time.Duration, fc firewallClientCreator) *ruleManager {
+func newRuleManager(logger *zap.Logger, timeout time.Duration, dc dockerClientCreator, fc firewallClientCreator) *ruleManager {
 	return &ruleManager{
 		done:              make(chan struct{}),
 		logger:            logger,
 		timeout:           timeout,
+		newDockerClient:   dc,
 		newFirewallClient: fc,
 	}
 }
@@ -158,7 +163,7 @@ func (r *ruleManager) init(ctx context.Context, dataDir string) error {
 		return err
 	}
 
-	r.dockerCli, err = client.NewClientWithOpts(client.FromEnv)
+	r.dockerCli, err = r.newDockerClient()
 	if err != nil {
 		return fmt.Errorf("error creating docker client: %w", err)
 	}
@@ -237,7 +242,7 @@ func withTimeout[T any](ctx context.Context, timeout time.Duration, f func(ctx c
 	return f(ctx)
 }
 
-func addFilters(ctx context.Context, client *client.Client) (<-chan events.Message, <-chan error) {
+func addFilters(ctx context.Context, client dockerClient) (<-chan events.Message, <-chan error) {
 	filter := filters.NewArgs(
 		filters.KeyValuePair{
 			Key:   "type",
