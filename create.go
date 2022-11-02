@@ -220,9 +220,9 @@ func (r *ruleManager) populateOutputRules(ctx context.Context, cfg config, proje
 	if i == -1 {
 		return nil
 	}
-	ctxTmout, cancel := context.WithTimeout(ctx, r.timeout)
-	defer cancel()
-	listedConts, err := r.dockerCli.ContainerList(ctxTmout, types.ContainerListOptions{})
+	listedConts, err := withTimeout(ctx, r.timeout, func(ctx context.Context) ([]types.Container, error) {
+		return r.dockerCli.ContainerList(ctx, types.ContainerListOptions{})
+	})
 	if err != nil {
 		return fmt.Errorf("error listing running containers: %w", err)
 	}
@@ -234,9 +234,9 @@ func (r *ruleManager) populateOutputRules(ctx context.Context, cfg config, proje
 
 		container, ok := containers[ruleCfg.Container]
 		if !ok {
-			ctx, cancel := context.WithTimeout(ctx, r.timeout)
-			defer cancel()
-			container, err = r.dockerCli.ContainerInspect(ctx, cont.ID)
+			container, err = withTimeout(ctx, r.timeout, func(ctx context.Context) (types.ContainerJSON, error) {
+				return r.dockerCli.ContainerInspect(ctx, cont.ID)
+			})
 			if err != nil {
 				return fmt.Errorf("error inspecting container %s: %w", ruleCfg.Container, err)
 			}
@@ -308,9 +308,9 @@ func (r *ruleManager) populateOutputRules(ctx context.Context, cfg config, proje
 
 				// fetch running containers again so if another rule requires
 				// this container it will find it
-				ctx, cancel := context.WithTimeout(ctx, r.timeout)
-				defer cancel()
-				listedConts, err = r.dockerCli.ContainerList(ctx, types.ContainerListOptions{})
+				listedConts, err = withTimeout(ctx, r.timeout, func(ctx context.Context) ([]types.Container, error) {
+					return r.dockerCli.ContainerList(ctx, types.ContainerListOptions{})
+				})
 				if err != nil {
 					return fmt.Errorf("error listing running containers: %w", err)
 				}

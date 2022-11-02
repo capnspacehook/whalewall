@@ -108,9 +108,9 @@ func (r *ruleManager) start(ctx context.Context, dataDir string) error {
 					}
 
 					if msg.Action == "start" {
-						ctx, cancel := context.WithTimeout(ctx, r.timeout)
-						defer cancel()
-						container, err := r.dockerCli.ContainerInspect(ctx, msg.ID)
+						container, err := withTimeout(ctx, r.timeout, func(ctx context.Context) (types.ContainerJSON, error) {
+							return r.dockerCli.ContainerInspect(ctx, msg.ID)
+						})
 						if err != nil {
 							r.logger.Error("error inspecting container", zap.String("container.id", msg.ID), zap.Error(err))
 							continue
@@ -158,12 +158,12 @@ func (r *ruleManager) init(ctx context.Context, dataDir string) error {
 	if err != nil {
 		return fmt.Errorf("error creating docker client: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(ctx, r.timeout)
-	defer cancel()
-	if _, err := r.dockerCli.Ping(ctx); err != nil {
+	_, err = withTimeout(ctx, r.timeout, func(ctx context.Context) (types.Ping, error) {
+		return r.dockerCli.Ping(ctx)
+	})
+	if err != nil {
 		return fmt.Errorf("error connecting to docker daemon: %w", err)
 	}
-
 	return nil
 }
 
@@ -215,6 +215,21 @@ func (r *ruleManager) initDB(ctx context.Context, dataDir string) error {
 	}
 
 	return nil
+}
+
+// withTimeout runs f with a timeout derived from [context.WithTimeout].
+// Using withTimeout guarantees that:
+//   - ctx is only shadowed in withTimeout's scope
+//   - The child context will have it's resources released immediately
+//     after f returns
+//
+// The main goal of withTimeout is to prevent shadowing ctx with a
+// context with a timeout, having that timeout expire and the next call
+// that uses ctx immediately failing.
+func withTimeout[T any](ctx context.Context, timeout time.Duration, f func(ctx context.Context) (T, error)) (T, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return f(ctx)
 }
 
 func addFilters(ctx context.Context, client *client.Client) (<-chan events.Message, <-chan error) {

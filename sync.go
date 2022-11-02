@@ -18,9 +18,9 @@ func (r *ruleManager) syncContainers(ctx context.Context) error {
 		Key:   "label",
 		Value: enabledLabel,
 	})
-	ctxTmout, cancel := context.WithTimeout(ctx, r.timeout)
-	defer cancel()
-	containers, err := r.dockerCli.ContainerList(ctxTmout, types.ContainerListOptions{Filters: filter})
+	containers, err := withTimeout(ctx, r.timeout, func(ctx context.Context) ([]types.Container, error) {
+		return r.dockerCli.ContainerList(ctx, types.ContainerListOptions{Filters: filter})
+	})
 	if err != nil {
 		return fmt.Errorf("error listing containers: %w", err)
 	}
@@ -47,9 +47,9 @@ func (r *ruleManager) syncContainers(ctx context.Context) error {
 			continue
 		}
 
-		ctx, cancel := context.WithTimeout(ctx, r.timeout)
-		defer cancel()
-		container, err := r.dockerCli.ContainerInspect(ctx, c.ID)
+		container, err := withTimeout(ctx, r.timeout, func(ctx context.Context) (types.ContainerJSON, error) {
+			return r.dockerCli.ContainerInspect(ctx, c.ID)
+		})
 		if err != nil {
 			r.logger.Error("error inspecting container", zap.String("container.id", c.ID), zap.Error(err))
 			continue
