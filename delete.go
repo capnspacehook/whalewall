@@ -92,6 +92,8 @@ func (r *ruleManager) cleanupRules(ctx context.Context) error {
 	}
 
 	for _, container := range containers {
+		ctx, cancel := context.WithTimeout(ctx, r.timeout)
+		defer cancel()
 		c, err := r.dockerCli.ContainerInspect(ctx, container.ID)
 		if err != nil {
 			if client.IsErrNotFound(err) {

@@ -30,8 +30,6 @@ const (
 
 	chainPrefix = "whalewall-"
 
-	containerStartTimeout = 5 * time.Second
-
 	srcAddrOffset = 12
 	dstAddrOffset = 16
 	srcPortOffset = 0
@@ -222,7 +220,9 @@ func (r *ruleManager) populateOutputRules(ctx context.Context, cfg config, proje
 	if i == -1 {
 		return nil
 	}
-	listedConts, err := r.dockerCli.ContainerList(ctx, types.ContainerListOptions{})
+	ctxTmout, cancel := context.WithTimeout(ctx, r.timeout)
+	defer cancel()
+	listedConts, err := r.dockerCli.ContainerList(ctxTmout, types.ContainerListOptions{})
 	if err != nil {
 		return fmt.Errorf("error listing running containers: %w", err)
 	}
@@ -234,6 +234,8 @@ func (r *ruleManager) populateOutputRules(ctx context.Context, cfg config, proje
 
 		container, ok := containers[ruleCfg.Container]
 		if !ok {
+			ctx, cancel := context.WithTimeout(ctx, r.timeout)
+			defer cancel()
 			container, err = r.dockerCli.ContainerInspect(ctx, cont.ID)
 			if err != nil {
 				return fmt.Errorf("error inspecting container %s: %w", ruleCfg.Container, err)
@@ -306,6 +308,8 @@ func (r *ruleManager) populateOutputRules(ctx context.Context, cfg config, proje
 
 				// fetch running containers again so if another rule requires
 				// this container it will find it
+				ctx, cancel := context.WithTimeout(ctx, r.timeout)
+				defer cancel()
 				listedConts, err = r.dockerCli.ContainerList(ctx, types.ContainerListOptions{})
 				if err != nil {
 					return fmt.Errorf("error listing running containers: %w", err)
@@ -384,7 +388,7 @@ func containerNameMatches(expectedName string, labels map[string]string, names .
 // isn't started yet.
 func (r *ruleManager) processRequiredContainers(ctx context.Context, contName string) (bool, error) {
 	found := false
-	timer := time.NewTimer(containerStartTimeout)
+	timer := time.NewTimer(r.timeout)
 
 	for !found {
 		select {
@@ -403,7 +407,7 @@ func (r *ruleManager) processRequiredContainers(ctx context.Context, contName st
 			if containerNameMatches(contName, c.Config.Labels, c.Name) {
 				found = true
 			} else {
-				timer.Reset(containerStartTimeout)
+				timer.Reset(r.timeout)
 			}
 		case <-timer.C:
 			// timeout elapsed, container doesn't exist or is being very

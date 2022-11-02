@@ -8,16 +8,20 @@ import (
 	"os/signal"
 	"runtime/debug"
 	"syscall"
+	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
+
+const defaultTimeout = 10 * time.Second
 
 var (
 	clear          bool
 	dataDir        string
 	debugLogs      bool
 	logPath        string
+	timeout        time.Duration
 	displayVersion bool
 )
 
@@ -26,6 +30,7 @@ func init() {
 	flag.StringVar(&dataDir, "d", ".", "directory to store state in")
 	flag.BoolVar(&debugLogs, "debug", false, "enable debug logging")
 	flag.StringVar(&logPath, "l", "stdout", "path to log to")
+	flag.DurationVar(&timeout, "t", defaultTimeout, "timeout for Docker API requests")
 	flag.BoolVar(&displayVersion, "version", false, "print version and build information and exit")
 }
 
@@ -66,7 +71,7 @@ func mainRetCode() int {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	r := newRuleManager(logger)
+	r := newRuleManager(logger, timeout)
 
 	// remove all created firewall rules if the use asked to clear
 	if clear {

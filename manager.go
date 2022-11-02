@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/events"
@@ -41,7 +42,8 @@ type ruleManager struct {
 	wg   sync.WaitGroup
 	done chan struct{}
 
-	logger *zap.Logger
+	logger  *zap.Logger
+	timeout time.Duration
 
 	createCh chan types.ContainerJSON
 	deleteCh chan string
@@ -50,10 +52,11 @@ type ruleManager struct {
 	dockerCli *client.Client
 }
 
-func newRuleManager(logger *zap.Logger) *ruleManager {
+func newRuleManager(logger *zap.Logger, timeout time.Duration) *ruleManager {
 	return &ruleManager{
-		done:   make(chan struct{}),
-		logger: logger,
+		done:    make(chan struct{}),
+		logger:  logger,
+		timeout: timeout,
 	}
 }
 
@@ -105,6 +108,8 @@ func (r *ruleManager) start(ctx context.Context, dataDir string) error {
 					}
 
 					if msg.Action == "start" {
+						ctx, cancel := context.WithTimeout(ctx, r.timeout)
+						defer cancel()
 						container, err := r.dockerCli.ContainerInspect(ctx, msg.ID)
 						if err != nil {
 							r.logger.Error("error inspecting container", zap.String("container.id", msg.ID), zap.Error(err))
@@ -153,6 +158,8 @@ func (r *ruleManager) init(ctx context.Context, dataDir string) error {
 	if err != nil {
 		return fmt.Errorf("error creating docker client: %w", err)
 	}
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
+	defer cancel()
 	if _, err := r.dockerCli.Ping(ctx); err != nil {
 		return fmt.Errorf("error connecting to docker daemon: %w", err)
 	}

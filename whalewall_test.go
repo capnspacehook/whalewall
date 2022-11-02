@@ -34,7 +34,7 @@ func TestIntegration(t *testing.T) {
 	is.NoErr(err)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	r := newRuleManager(logger)
+	r := newRuleManager(logger, defaultTimeout)
 	err = r.start(ctx, t.TempDir())
 	is.NoErr(err)
 	t.Cleanup(func() {
@@ -1289,7 +1289,7 @@ mapped_ports:
 			is := is.New(t)
 
 			// create new database and base rules
-			r := newRuleManager(zap.NewNop())
+			r := newRuleManager(zap.NewNop(), defaultTimeout)
 			err = r.init(context.Background(), t.TempDir())
 			is.NoErr(err)
 			err = r.createBaseRules()
