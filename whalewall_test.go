@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"os"
 	"os/exec"
 	"testing"
 	"time"
@@ -96,6 +97,8 @@ func run(t *testing.T, args ...string) int {
 	t.Logf("running %v", args)
 
 	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	err := cmd.Run()
 	if err != nil {
 		var exitErr *exec.ExitError
