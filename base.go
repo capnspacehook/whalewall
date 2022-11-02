@@ -81,7 +81,7 @@ var (
 )
 
 func (r *ruleManager) createBaseRules() error {
-	nfc, err := nftables.New()
+	nfc, err := r.newFirewallClient()
 	if err != nil {
 		return fmt.Errorf("error creating netlink connection: %w", err)
 	}

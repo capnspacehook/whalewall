@@ -34,8 +34,11 @@ func TestIntegration(t *testing.T) {
 	logger, err := zap.NewDevelopment()
 	is.NoErr(err)
 
+	firewallCreator := func() (firewallClient, error) {
+		return nftables.New()
+	}
+	r := newRuleManager(logger, defaultTimeout, firewallCreator)
 	ctx, cancel := context.WithCancel(context.Background())
-	r := newRuleManager(logger, defaultTimeout)
 	err = r.start(ctx, t.TempDir())
 	is.NoErr(err)
 	t.Cleanup(func() {
@@ -1291,8 +1294,23 @@ mapped_ports:
 		t.Run(tt.name, func(t *testing.T) {
 			is := is.New(t)
 
+			// create mock nftables client and add required prerequisite
+			// DOCKER-USER chain
+			mfc := newMockFirewall(logger)
+			mfc.AddTable(filterTable)
+			mfc.AddChain(&nftables.Chain{
+				Name:  dockerChainName,
+				Table: filterTable,
+				Type:  nftables.ChainTypeFilter,
+			})
+			is.NoErr(mfc.Flush())
+
+			firewallCreator := func() (firewallClient, error) {
+				return mfc, nil
+			}
+			r := newRuleManager(zap.NewNop(), defaultTimeout, firewallCreator)
+
 			// create new database and base rules
-			r := newRuleManager(zap.NewNop(), defaultTimeout)
 			err = r.init(context.Background(), t.TempDir())
 			is.NoErr(err)
 			err = r.createBaseRules()
@@ -1306,13 +1324,9 @@ mapped_ports:
 			err := r.createContainerRules(context.Background(), tt.container)
 			is.NoErr(err)
 
-			// TODO: create rules in network namespace
-			nfc, err := nftables.New()
-			is.NoErr(err)
-
 			// check that created rules are what is expected
 			for chain, expectedRules := range tt.expectedRules {
-				rules, err := nfc.GetRules(chain.Table, chain)
+				rules, err := mfc.GetRules(chain.Table, chain)
 				is.NoErr(err)
 
 				is.Equal(len(expectedRules), len(rules))

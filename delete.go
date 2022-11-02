@@ -37,7 +37,7 @@ func (r *ruleManager) clearRules(ctx context.Context) error {
 		r.deleteContainerRules(ctx, container.ID, container.Name)
 	}
 
-	nfc, err := nftables.New()
+	nfc, err := r.newFirewallClient()
 	if err != nil {
 		return fmt.Errorf("error creating netlink connection: %w", err)
 	}
@@ -139,7 +139,7 @@ func (r *ruleManager) deleteRules(ctx context.Context) {
 // deleteContainerRules removes all nftables rules for a container.
 func (r *ruleManager) deleteContainerRules(ctx context.Context, id, name string) {
 	logger := r.logger.With(zap.String("container.id", id[:12]), zap.String("container.name", name))
-	nfc, err := nftables.New()
+	nfc, err := r.newFirewallClient()
 	if err != nil {
 		logger.Error("error creating netlink connection", zap.Error(err))
 		return
@@ -213,7 +213,7 @@ func (r *ruleManager) deleteContainerRules(ctx context.Context, id, name string)
 
 // deleteRulesFromContainer removes nftables rules that belong to a container
 // specified by id.
-func deleteRulesFromContainer(logger *zap.Logger, nfc *nftables.Conn, rules []*nftables.Rule, id string) {
+func deleteRulesFromContainer(logger *zap.Logger, nfc firewallClient, rules []*nftables.Rule, id string) {
 	idb := []byte(id)
 	for _, rule := range rules {
 		if !bytes.Equal(idb, rule.UserData) {

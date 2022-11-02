@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/nftables"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -71,9 +72,12 @@ func mainRetCode() int {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	r := newRuleManager(logger, timeout)
+	firewallCreator := func() (firewallClient, error) {
+		return nftables.New()
+	}
+	r := newRuleManager(logger, timeout, firewallCreator)
 
-	// remove all created firewall rules if the use asked to clear
+	// remove all created firewall rules if the user asked to clear
 	if clear {
 		logger.Info("clearing rules")
 		if err := r.clear(ctx, dataDir); err != nil {
@@ -104,5 +108,6 @@ func mainRetCode() int {
 	<-ctx.Done()
 	logger.Info("shutting down")
 	r.stop()
+
 	return 0
 }

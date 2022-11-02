@@ -113,7 +113,7 @@ func (r *ruleManager) createContainerRules(ctx context.Context, container types.
 		addrs[netName] = ref(addr.As4())[:]
 	}
 
-	nfc, err := nftables.New()
+	nfc, err := r.newFirewallClient()
 	if err != nil {
 		return fmt.Errorf("error creating netlink connection: %w", err)
 	}

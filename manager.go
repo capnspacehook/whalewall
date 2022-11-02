@@ -42,8 +42,9 @@ type ruleManager struct {
 	wg   sync.WaitGroup
 	done chan struct{}
 
-	logger  *zap.Logger
-	timeout time.Duration
+	logger            *zap.Logger
+	timeout           time.Duration
+	newFirewallClient firewallClientCreator
 
 	createCh chan types.ContainerJSON
 	deleteCh chan string
@@ -52,11 +53,14 @@ type ruleManager struct {
 	dockerCli *client.Client
 }
 
-func newRuleManager(logger *zap.Logger, timeout time.Duration) *ruleManager {
+type firewallClientCreator func() (firewallClient, error)
+
+func newRuleManager(logger *zap.Logger, timeout time.Duration, fc firewallClientCreator) *ruleManager {
 	return &ruleManager{
-		done:    make(chan struct{}),
-		logger:  logger,
-		timeout: timeout,
+		done:              make(chan struct{}),
+		logger:            logger,
+		timeout:           timeout,
+		newFirewallClient: fc,
 	}
 }
 
@@ -219,6 +223,7 @@ func (r *ruleManager) initDB(ctx context.Context, dataDir string) error {
 
 // withTimeout runs f with a timeout derived from [context.WithTimeout].
 // Using withTimeout guarantees that:
+//
 //   - ctx is only shadowed in withTimeout's scope
 //   - The child context will have it's resources released immediately
 //     after f returns
