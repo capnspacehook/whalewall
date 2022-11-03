@@ -129,15 +129,6 @@ func restrictPrivileges(logger *zap.Logger, dataDir, logPath string) bool {
 	// TODO: test with docker with TLS
 	allowedPaths := []landlock.PathOpt{
 		landlock.RODirs(dataDir),
-		landlock.ROFiles(
-			"/sys/kernel/mm/transparent_hugepage/hpage_pmd_size",
-			"/etc/protocols",
-			"/etc/services",
-			"/etc/localtime",
-			"/etc/nsswitch.conf",
-			"/etc/resolv.conf",
-			"/etc/hosts",
-		),
 		landlock.RWFiles(
 			sqliteFile,
 			sqliteFile+"-wal",
@@ -148,6 +139,21 @@ func restrictPrivileges(logger *zap.Logger, dataDir, logPath string) bool {
 		allowedPaths = append(allowedPaths,
 			landlock.PathAccess(llsyscall.AccessFSWriteFile, logPath),
 		)
+	}
+	roFiles := []string{
+		"/etc/protocols",
+		"/etc/services",
+		"/etc/localtime",
+		"/etc/nsswitch.conf",
+		"/etc/resolv.conf",
+		"/etc/hosts",
+	}
+	for _, file := range roFiles {
+		if _, err := os.Stat(file); err == nil {
+			allowedPaths = append(allowedPaths,
+				landlock.PathAccess(llsyscall.AccessFSReadFile, file),
+			)
+		}
 	}
 
 	err = landlock.V1.RestrictPaths(

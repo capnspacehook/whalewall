@@ -50,6 +50,11 @@ var allowedSyscalls = seccomp.SyscallRules{
 	},
 	unix.SYS_CLOSE:   {},
 	unix.SYS_CONNECT: {},
+	unix.SYS_EPOLL_CREATE1: {
+		{
+			seccomp.EqualTo(unix.EPOLL_CLOEXEC),
+		},
+	},
 	unix.SYS_EPOLL_CTL: {
 		{
 			seccomp.MatchAny{},
@@ -162,6 +167,7 @@ var allowedSyscalls = seccomp.SyscallRules{
 	unix.SYS_NANOSLEEP:  {},
 	unix.SYS_NEWFSTATAT: {},
 	unix.SYS_OPENAT:     {},
+	unix.SYS_PIPE2:      {},
 	unix.SYS_READ:       {},
 	unix.SYS_RECVMSG: {
 		{
