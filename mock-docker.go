@@ -49,10 +49,7 @@ func (m *mockDockerClient) ContainerList(_ context.Context, _ types.ContainerLis
 		listedConts[i] = types.Container{
 			ID:     cont.ID,
 			Names:  []string{cont.Name},
-			Image:  cont.Image,
 			Labels: cont.Config.Labels,
-			Status: cont.State.Status,
-			Mounts: cont.Mounts,
 		}
 	}
 

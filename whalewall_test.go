@@ -120,9 +120,12 @@ func run(t *testing.T, args ...string) int {
 
 func TestRuleCreation(t *testing.T) {
 	cont1ID := "container_one_ID"
+	cont2ID := "container_two_ID"
 	cont1Name := "container1"
+	cont2Name := "container2"
 	gatewayAddr := netip.MustParseAddr("172.0.1.1")
 	cont1Addr := netip.MustParseAddr("172.0.1.2")
+	cont2Addr := netip.MustParseAddr("172.0.1.3")
 	dstAddr := netip.MustParseAddr("1.1.1.1")
 	dstRange := netipx.RangeOfPrefix(netip.MustParsePrefix("192.168.1.0/24"))
 	lowDstAddr := dstRange.From()
@@ -705,6 +708,109 @@ output:
 							},
 						),
 						UserData: []byte(cont1ID),
+					},
+					createDropRule(
+						&nftables.Chain{
+							Name:  buildChainName(cont1Name, cont1ID),
+							Table: filterTable,
+						},
+						cont1ID,
+					),
+				},
+			},
+		},
+		{
+			name: "allow access to container",
+			containers: []types.ContainerJSON{
+				{
+					ContainerJSONBase: &types.ContainerJSONBase{
+						ID:   cont2ID,
+						Name: "/" + cont2Name,
+					},
+					Config: &container.Config{
+						Labels: map[string]string{
+							enabledLabel: "true",
+						},
+					},
+					NetworkSettings: &types.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"cont_net": {
+								Gateway:   gatewayAddr.String(),
+								IPAddress: cont2Addr.String(),
+							},
+						},
+					},
+				},
+				{
+					ContainerJSONBase: &types.ContainerJSONBase{
+						ID:   cont1ID,
+						Name: "/" + cont1Name,
+					},
+					Config: &container.Config{
+						Labels: map[string]string{
+							enabledLabel: "true",
+							rulesLabel: `
+output:
+  - container: container2
+    network: cont_net
+    proto: udp
+    port: 9001`,
+						},
+					},
+					NetworkSettings: &types.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"cont_net": {
+								Gateway:   gatewayAddr.String(),
+								IPAddress: cont1Addr.String(),
+							},
+						},
+					},
+				},
+			},
+			expectedRules: map[*nftables.Chain][]*nftables.Rule{
+				{
+					Name:  buildChainName(cont2Name, cont2ID),
+					Table: filterTable,
+				}: {
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont2Addr.As4())[:], srcAddrOffset),
+							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchProtoExprs(unix.IPPROTO_UDP),
+							matchPortExprs(9001, srcPortOffset),
+							matchConnStateExprs(stateEst),
+							[]expr.Any{
+								&expr.Counter{},
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont2ID),
+					},
+					createDropRule(
+						&nftables.Chain{
+							Name:  buildChainName(cont2Name, cont2ID),
+							Table: filterTable,
+						},
+						cont2ID,
+					),
+				},
+				{
+					Name:  buildChainName(cont1Name, cont1ID),
+					Table: filterTable,
+				}: {
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchIPExprs(ref(cont2Addr.As4())[:], dstAddrOffset),
+							matchProtoExprs(unix.IPPROTO_UDP),
+							matchPortExprs(9001, dstPortOffset),
+							matchConnStateExprs(stateNewEst),
+							[]expr.Any{
+								&expr.Counter{},
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont2ID),
 					},
 					createDropRule(
 						&nftables.Chain{
