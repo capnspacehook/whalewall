@@ -76,16 +76,16 @@ func (r *ruleManager) deleteContainer(ctx context.Context, logger *zap.Logger, i
 	defer tx.Rollback(ctx)
 
 	if err := tx.DeleteContainerAddrs(ctx, id); err != nil {
-		return fmt.Errorf("error deleting container addrs: %w", err)
+		return fmt.Errorf("error deleting container addrs in database: %w", err)
 	}
 	if err := tx.DeleteContainerAliases(ctx, id); err != nil {
-		return fmt.Errorf("error deleting container aliases: %w", err)
+		return fmt.Errorf("error deleting container aliases in database: %w", err)
 	}
 	if err := tx.DeleteEstContainers(ctx, id); err != nil {
-		return fmt.Errorf("error deleting established container: %w", err)
+		return fmt.Errorf("error deleting established container in database: %w", err)
 	}
 	if err := tx.DeleteContainer(ctx, id); err != nil {
-		return err
+		return fmt.Errorf("error deleting container in database: %w", err)
 	}
 
 	return tx.Commit(ctx)

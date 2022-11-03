@@ -30,6 +30,8 @@ const (
 PRAGMA busy_timeout = 1000;
 PRAGMA journal_mode=WAL;
 `
+	dummyID   = "dummy_id"
+	dummyName = "dummy_name"
 
 	enabledLabel = "whalewall.enabled"
 	rulesLabel   = "whalewall.rules"
@@ -59,18 +61,24 @@ type dockerClientCreator func() (dockerClient, error)
 
 type firewallClientCreator func() (firewallClient, error)
 
-func newRuleManager(logger *zap.Logger, timeout time.Duration, dc dockerClientCreator, fc firewallClientCreator) *ruleManager {
-	return &ruleManager{
+func newRuleManager(ctx context.Context, logger *zap.Logger, dataDir string, timeout time.Duration, dc dockerClientCreator, fc firewallClientCreator) (*ruleManager, error) {
+	r := ruleManager{
 		done:              make(chan struct{}),
 		logger:            logger,
 		timeout:           timeout,
 		newDockerClient:   dc,
 		newFirewallClient: fc,
 	}
+	err := r.initDB(ctx, dataDir)
+	if err != nil {
+		return nil, err
+	}
+
+	return &r, nil
 }
 
-func (r *ruleManager) start(ctx context.Context, dataDir string) error {
-	if err := r.init(ctx, dataDir); err != nil {
+func (r *ruleManager) start(ctx context.Context) error {
+	if err := r.init(ctx); err != nil {
 		return err
 	}
 	if err := r.createBaseRules(); err != nil {
@@ -157,16 +165,12 @@ func (r *ruleManager) start(ctx context.Context, dataDir string) error {
 	return nil
 }
 
-func (r *ruleManager) init(ctx context.Context, dataDir string) error {
-	err := r.initDB(ctx, dataDir)
-	if err != nil {
-		return err
-	}
-
-	r.dockerCli, err = r.newDockerClient()
+func (r *ruleManager) init(ctx context.Context) error {
+	dockerCli, err := r.newDockerClient()
 	if err != nil {
 		return fmt.Errorf("error creating docker client: %w", err)
 	}
+	r.dockerCli = dockerCli
 	_, err = withTimeout(ctx, r.timeout, func(ctx context.Context) (types.Ping, error) {
 		return r.dockerCli.Ping(ctx)
 	})
@@ -198,7 +202,7 @@ func (r *ruleManager) initDB(ctx context.Context, dataDir string) error {
 	var dbNotExist bool
 	_, err = os.Stat(dbFile)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
+		if errors.Is(err, os.ErrNotExist) {
 			dbNotExist = true
 		} else {
 			return err
@@ -209,7 +213,7 @@ func (r *ruleManager) initDB(ctx context.Context, dataDir string) error {
 	if err != nil {
 		return fmt.Errorf("error opening database: %w", err)
 	}
-	// create database schema if a sqlite file doesn't exist
+	// create database schema if a SQLite database didn't exist
 	if dbNotExist {
 		if _, err := sqlDB.ExecContext(ctx, dbSchema); err != nil {
 			return fmt.Errorf("error creating tables in database: %w", err)
@@ -221,6 +225,30 @@ func (r *ruleManager) initDB(ctx context.Context, dataDir string) error {
 	r.db, err = database.NewDB(ctx, sqlDB)
 	if err != nil {
 		return fmt.Errorf("error preparing database queries: %w", err)
+	}
+	// SQLite will lazily create WAL files when something is first
+	// written to the database, and landlock requires that files exist
+	// in order to set rules on them. So we commit a no-op transaction
+	// just so SQLite will create the WAL files and make landlock happy.
+	if dbNotExist {
+		tx, err := r.db.Begin(ctx, r.logger)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(ctx)
+
+		err = r.db.AddContainer(ctx, database.AddContainerParams{
+			ID:   dummyID,
+			Name: dummyName,
+		})
+		if err != nil {
+			return fmt.Errorf("error adding container to database: %w", err)
+		}
+		err = r.db.DeleteContainer(ctx, dummyID)
+		if err != nil {
+			return fmt.Errorf("error deleting container in database: %w", err)
+		}
+		return tx.Commit(ctx)
 	}
 
 	return nil

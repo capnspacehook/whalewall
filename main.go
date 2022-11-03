@@ -6,12 +6,16 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/docker/docker/client"
 	"github.com/google/nftables"
+	"github.com/landlock-lsm/go-landlock/landlock"
+	llsyscall "github.com/landlock-lsm/go-landlock/landlock/syscall"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -58,6 +62,7 @@ func mainRetCode() int {
 		return 1
 	}
 
+	// create rule manager and drop unneeded privileges
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -67,7 +72,14 @@ func mainRetCode() int {
 	firewallCreator := func() (firewallClient, error) {
 		return nftables.New()
 	}
-	r := newRuleManager(logger, *timeout, dockerCreator, firewallCreator)
+	r, err := newRuleManager(ctx, logger, *dataDir, *timeout, dockerCreator, firewallCreator)
+	if err != nil {
+		logger.Error("error initializing", zap.Error(err))
+	}
+
+	if !restrictPrivileges(logger, *dataDir, *logPath) {
+		return 1
+	}
 
 	// remove all created firewall rules if the user asked to clear
 	if *clear {
@@ -86,13 +98,15 @@ func mainRetCode() int {
 	for _, buildSetting := range info.Settings {
 		if buildSetting.Key == "vcs.revision" {
 			versionFields = append(versionFields, zap.String("commit", buildSetting.Value))
-			break
+		}
+		if buildSetting.Key == "CGO_ENABLED" && buildSetting.Value != "0" {
+			logger.Fatal("this binary was built with cgo and will not function as intended; rebuild with cgo disabled")
 		}
 	}
 	logger.Info("starting whalewall", versionFields...)
 
 	// start managing firewall rules
-	if err = r.start(ctx, *dataDir); err != nil {
+	if err = r.start(ctx); err != nil {
 		logger.Error("error starting", zap.Error(err))
 		return 1
 	}
@@ -102,4 +116,60 @@ func mainRetCode() int {
 	r.stop()
 
 	return 0
+}
+
+func restrictPrivileges(logger *zap.Logger, dataDir, logPath string) bool {
+	// only allow needed files to be read/written to
+	dataDirAbs, err := filepath.Abs(dataDir)
+	if err != nil {
+		logger.Error("error getting absolute path", zap.String("path", dataDir), zap.Error(err))
+		return false
+	}
+	sqliteFile := filepath.Join(dataDirAbs, dbFilename)
+	// TODO: test with docker with TLS
+	allowedPaths := []landlock.PathOpt{
+		landlock.RODirs(dataDir),
+		landlock.ROFiles(
+			"/sys/kernel/mm/transparent_hugepage/hpage_pmd_size",
+			"/etc/protocols",
+			"/etc/services",
+			"/etc/localtime",
+			"/etc/nsswitch.conf",
+			"/etc/resolv.conf",
+			"/etc/hosts",
+		),
+		landlock.RWFiles(
+			sqliteFile,
+			sqliteFile+"-wal",
+			sqliteFile+"-shm",
+		),
+	}
+	if logPath != "stdout" && logPath != "stderr" {
+		allowedPaths = append(allowedPaths,
+			landlock.PathAccess(llsyscall.AccessFSWriteFile, logPath),
+		)
+	}
+
+	err = landlock.V1.RestrictPaths(
+		allowedPaths...,
+	)
+	if err != nil {
+		if strings.HasPrefix(err.Error(), "missing kernel Landlock support") {
+			logger.Info("unable to apply landlock rules, missing kernel support")
+		} else {
+			logger.Fatal("error creating landlock rules", zap.NamedError("error", err))
+		}
+	} else {
+		logger.Info("applied landlock rules")
+	}
+
+	// block unneeded syscalls
+	numAllowedSyscalls, err := installSeccompFilters()
+	if err != nil {
+		logger.Error("error setting seccomp rules", zap.Error(err))
+		return false
+	}
+	logger.Info("applied seccomp filters", zap.Int("syscalls.allowed", numAllowedSyscalls))
+
+	return true
 }

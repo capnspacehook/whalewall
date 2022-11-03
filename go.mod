@@ -6,11 +6,13 @@ require (
 	github.com/docker/docker v20.10.21+incompatible
 	github.com/docker/go-connections v0.4.0
 	github.com/google/nftables v0.0.0-20221015190445-4f5cd5826fbd
+	github.com/landlock-lsm/go-landlock v0.0.0-20221020172021-2efe5a7c13ab
 	go.uber.org/zap v1.23.0
 	go4.org/netipx v0.0.0-20220812043211-3cc044ffd68d
 	golang.org/x/exp v0.0.0-20220827204233-334a2380cb91
 	golang.org/x/sys v0.1.0
 	gopkg.in/yaml.v3 v3.0.1
+	gvisor.dev/gvisor v0.0.0-20221103020242-36a705824610
 	modernc.org/sqlite v1.19.3
 )
 
@@ -48,6 +50,7 @@ require (
 	golang.org/x/tools v0.1.12 // indirect
 	gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127 // indirect
 	gotest.tools/v3 v3.0.3 // indirect
+	kernel.org/pub/linux/libs/security/libcap/psx v1.2.66 // indirect
 	lukechampine.com/uint128 v1.2.0 // indirect
 	modernc.org/cc/v3 v3.40.0 // indirect
 	modernc.org/ccgo/v3 v3.16.13-0.20221017192402-261537637ce8 // indirect

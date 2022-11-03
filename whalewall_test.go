@@ -35,15 +35,16 @@ func TestIntegration(t *testing.T) {
 	logger, err := zap.NewDevelopment()
 	is.NoErr(err)
 
+	ctx, cancel := context.WithCancel(context.Background())
 	dockerCreator := func() (dockerClient, error) {
 		return client.NewClientWithOpts(client.FromEnv)
 	}
 	firewallCreator := func() (firewallClient, error) {
 		return nftables.New()
 	}
-	r := newRuleManager(logger, defaultTimeout, dockerCreator, firewallCreator)
-	ctx, cancel := context.WithCancel(context.Background())
-	err = r.start(ctx, t.TempDir())
+	r, err := newRuleManager(ctx, logger, t.TempDir(), defaultTimeout, dockerCreator, firewallCreator)
+	is.NoErr(err)
+	err = r.start(ctx)
 	is.NoErr(err)
 	t.Cleanup(func() {
 		err = r.clearRules(ctx)
@@ -1447,10 +1448,11 @@ mapped_ports:
 			firewallCreator := func() (firewallClient, error) {
 				return mfc, nil
 			}
-			r := newRuleManager(zap.NewNop(), defaultTimeout, dockerCreator, firewallCreator)
+			r, err := newRuleManager(context.Background(), zap.NewNop(), t.TempDir(), defaultTimeout, dockerCreator, firewallCreator)
+			is.NoErr(err)
 
 			// create new database and base rules
-			err = r.init(context.Background(), t.TempDir())
+			err = r.init(context.Background())
 			is.NoErr(err)
 			err = r.createBaseRules()
 			is.NoErr(err)
