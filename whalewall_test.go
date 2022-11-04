@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"net/netip"
 	"os"
@@ -24,6 +25,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var (
+	binaryTests     = flag.Bool("binary-tests", false, "use compiled binary to test with landlock and seccomp enabled")
+	whalewallBinary = flag.String("whalewall-binary", "", "path to compiled whalewall binary")
+)
+
 func TestIntegration(t *testing.T) {
 	is := is.New(t)
 
@@ -32,6 +38,36 @@ func TestIntegration(t *testing.T) {
 		run(t, "docker", "compose", "-f=testdata/docker-compose.yml", "down")
 	})
 
+	startWhalewall(t, is)
+
+	// wait until whalewall has created firewall rules
+	time.Sleep(time.Second)
+
+	is.True(runCmd(t, "client", "nslookup google.com") == 0)                             // udp port 53 is allowed
+	is.True(runCmd(t, "client", "curl --connect-timeout 1 http://1.1.1.1") == 0)         // tcp port 80 to 1.1.1.1 is allowed
+	is.True(runCmd(t, "client", "curl --connect-timeout 1 http://1.0.0.1") != 0)         // tcp port 80 to 1.0.0.1 is not allowed
+	is.True(runCmd(t, "client", "curl --connect-timeout 1 https://www.google.com") == 0) // DNS and HTTPS is allowed externally
+	is.True(portOpen(t, "client", "server", 9001, false))                                // tcp port 9001 is allowed client -> server
+	is.True(!portOpen(t, "client", "server", 9001, true))                                // udp port 9001 is not allowed client -> server
+	is.True(!portOpen(t, "client", "server", 80, false))                                 // tcp port 80 is not allowed client -> server
+	is.True(!portOpen(t, "client", "server", 80, true))                                  // udp port 80 is not allowed client -> server
+	is.True(portOpen(t, "tester", "localhost", 8080, false))                             // tcp mapped port 8080:80 of client is allowed from localhost
+	is.True(!portOpen(t, "tester", "localhost", 8080, true))                             // udp mapped port 8080:80 of client is not allowed from localhost
+	is.True(!portOpen(t, "tester", "localhost", 8081, false))                            // tcp mapped port 8081:80 of server is not allowed from localhost
+	is.True(!portOpen(t, "tester", "localhost", 8081, true))                             // udp mapped port 8081:80 of server is not allowed from localhost
+	is.True(!portOpen(t, "tester", "localhost", 9001, false))                            // tcp mapped port 9001:9001 of server is not allowed from localhost
+	is.True(!portOpen(t, "tester", "localhost", 9001, true))                             // udp mapped port 9001:9001 of server is not allowed from localhost
+}
+
+func startWhalewall(t *testing.T, is *is.I) {
+	if *binaryTests {
+		startBinary(t, is)
+		return
+	}
+	startFunc(t, is)
+}
+
+func startFunc(t *testing.T, is *is.I) {
 	logger, err := zap.NewDevelopment()
 	is.NoErr(err)
 
@@ -54,24 +90,28 @@ func TestIntegration(t *testing.T) {
 		cancel()
 		r.stop()
 	})
+}
 
-	// wait until whalewall has created firewall rules
-	time.Sleep(time.Second)
+func startBinary(t *testing.T, is *is.I) {
+	wwCmd := exec.Command(*whalewallBinary, "-debug", "-d", t.TempDir())
+	wwCmd.Stdout = os.Stdout
+	wwCmd.Stderr = os.Stderr
+	err := wwCmd.Start()
+	is.NoErr(err)
 
-	is.True(runCmd(t, "client", "nslookup google.com") == 0)                             // udp port 53 is allowed
-	is.True(runCmd(t, "client", "curl --connect-timeout 1 http://1.1.1.1") == 0)         // tcp port 80 to 1.1.1.1 is allowed
-	is.True(runCmd(t, "client", "curl --connect-timeout 1 http://1.0.0.1") != 0)         // tcp port 80 to 1.0.0.1 is not allowed
-	is.True(runCmd(t, "client", "curl --connect-timeout 1 https://www.google.com") == 0) // DNS and HTTPS is allowed externally
-	is.True(portOpen(t, "client", "server", 9001, false))                                // tcp port 9001 is allowed client -> server
-	is.True(!portOpen(t, "client", "server", 9001, true))                                // udp port 9001 is not allowed client -> server
-	is.True(!portOpen(t, "client", "server", 80, false))                                 // tcp port 80 is not allowed client -> server
-	is.True(!portOpen(t, "client", "server", 80, true))                                  // udp port 80 is not allowed client -> server
-	is.True(portOpen(t, "tester", "localhost", 8080, false))                             // tcp mapped port 8080:80 of client is allowed from localhost
-	is.True(!portOpen(t, "tester", "localhost", 8080, true))                             // udp mapped port 8080:80 of client is not allowed from localhost
-	is.True(!portOpen(t, "tester", "localhost", 8081, false))                            // tcp mapped port 8081:80 of server is not allowed from localhost
-	is.True(!portOpen(t, "tester", "localhost", 8081, true))                             // udp mapped port 8081:80 of server is not allowed from localhost
-	is.True(!portOpen(t, "tester", "localhost", 9001, false))                            // tcp mapped port 9001:9001 of server is not allowed from localhost
-	is.True(!portOpen(t, "tester", "localhost", 9001, true))                             // udp mapped port 9001:9001 of server is not allowed from localhost
+	t.Cleanup(func() {
+		err := wwCmd.Process.Signal(os.Interrupt)
+		if err != nil {
+			t.Errorf("error killing whalewall process: %v", err)
+		}
+
+		if err := wwCmd.Wait(); err != nil {
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				t.Errorf("whalewall exited with error: %v", err)
+			}
+		}
+	})
 }
 
 func portOpen(t *testing.T, container, host string, port uint16, udp bool) bool {
