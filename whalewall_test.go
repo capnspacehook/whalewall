@@ -27,7 +27,9 @@ import (
 
 var (
 	binaryTests     = flag.Bool("binary-tests", false, "use compiled binary to test with landlock and seccomp enabled")
-	whalewallBinary = flag.String("whalewall-binary", "", "path to compiled whalewall binary")
+	containerTests  = flag.Bool("container-tests", false, "use Docker image to test with landlock and seccomp enabled")
+	whalewallBinary = flag.String("whalewall-binary", "./whalewall", "path to compiled whalewall binary")
+	whalewallImage  = flag.String("whalewall-image", "whalewall:test", "Docker image to test with")
 )
 
 func TestIntegration(t *testing.T) {
@@ -60,11 +62,67 @@ func TestIntegration(t *testing.T) {
 }
 
 func startWhalewall(t *testing.T, is *is.I) {
-	if *binaryTests {
+	switch {
+	case *binaryTests:
 		startBinary(t, is)
-		return
+	case *containerTests:
+		startContainer(t, is)
+	default:
+		startFunc(t, is)
 	}
-	startFunc(t, is)
+}
+
+func startBinary(t *testing.T, is *is.I) {
+	wwCmd := exec.Command(*whalewallBinary, "-debug", "-d", t.TempDir())
+	wwCmd.Stdout = os.Stdout
+	wwCmd.Stderr = os.Stderr
+	err := wwCmd.Start()
+	is.NoErr(err)
+
+	t.Cleanup(func() {
+		err := wwCmd.Process.Signal(os.Interrupt)
+		if err != nil {
+			t.Errorf("error killing whalewall process: %v", err)
+		}
+
+		if err := wwCmd.Wait(); err != nil {
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				t.Errorf("whalewall exited with error: %v", err)
+			}
+		}
+	})
+}
+
+func startContainer(t *testing.T, is *is.I) {
+	dockerCmd := exec.Command(
+		"docker",
+		"run",
+		"--cap-add=NET_ADMIN",
+		"--network=host",
+		"-v=/var/run/docker.sock:/var/run/docker.sock:ro",
+		"--rm",
+		*whalewallImage,
+		"-debug",
+	)
+	dockerCmd.Stdout = os.Stdout
+	dockerCmd.Stderr = os.Stderr
+	err := dockerCmd.Start()
+	is.NoErr(err)
+
+	t.Cleanup(func() {
+		err := dockerCmd.Process.Signal(os.Interrupt)
+		if err != nil {
+			t.Errorf("error killing whalewall container: %v", err)
+		}
+
+		if err := dockerCmd.Wait(); err != nil {
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				t.Errorf("whalewall container exited with error: %v", err)
+			}
+		}
+	})
 }
 
 func startFunc(t *testing.T, is *is.I) {
@@ -89,28 +147,6 @@ func startFunc(t *testing.T, is *is.I) {
 		}
 		cancel()
 		r.stop()
-	})
-}
-
-func startBinary(t *testing.T, is *is.I) {
-	wwCmd := exec.Command(*whalewallBinary, "-debug", "-d", t.TempDir())
-	wwCmd.Stdout = os.Stdout
-	wwCmd.Stderr = os.Stderr
-	err := wwCmd.Start()
-	is.NoErr(err)
-
-	t.Cleanup(func() {
-		err := wwCmd.Process.Signal(os.Interrupt)
-		if err != nil {
-			t.Errorf("error killing whalewall process: %v", err)
-		}
-
-		if err := wwCmd.Wait(); err != nil {
-			var exitErr *exec.ExitError
-			if errors.As(err, &exitErr) {
-				t.Errorf("whalewall exited with error: %v", err)
-			}
-		}
 	})
 }
 

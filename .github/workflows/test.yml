@@ -37,11 +37,9 @@ jobs:
       # interface with nftables, which is a privileged operation
       - run: |
           go test -c -race -o whalewall.test
-          sudo ./whalewall.test -test.failfast -test.timeout 5m -test.v
+          sudo ./whalewall.test -test.timeout 5m -test.v
 
   binary-test:
-    # required for nftables to work correctly
-    # TODO: change to "ubuntu-latest" when 22.04 is the latest
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout code
@@ -54,18 +52,15 @@ jobs:
           check-latest: true
           cache: true
 
-      # run the same tests as above but use a separate compiled binary to
-      # create rules to test with landlock and seccomp filters active
+      # run the same tests as above but use a binary to create rules
+      # to test with landlock and seccomp filters active
       - run: |
           CGO_ENABLED=0 go build -o whalewall
           go test -c -o whalewall.test
-          sudo ./whalewall.test -binary-tests -whalewall-binary ./whalewall -test.v -test.timeout 5m
+          sudo ./whalewall.test -binary-tests -test.timeout 5m -test.v
 
-  build-image:
-    runs-on: ubuntu-latest
-    # only run this check on pull requests, pushes to master will trigger
-    # an image release
-    if: contains(github.ref, 'pull')
+  image-test:
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -77,4 +72,17 @@ jobs:
         uses: docker/build-push-action@v3
         with:
           push: false
-          tags: ghcr.io/${{ github.repository }}:build-test
+          tags: whalewall:test
+
+      - name: Install Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: ${{ env.GO_VERSION }}.x
+          check-latest: true
+          cache: true
+
+      # run the same tests as above but use a container to create rules
+      # to test with landlock and seccomp filters active
+      - run: |
+          go test -c -o whalewall.test
+          sudo ./whalewall.test -container-tests -test.timeout 5m -test.v
