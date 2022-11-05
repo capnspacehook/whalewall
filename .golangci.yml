@@ -30,6 +30,9 @@ linters:
     - usestdlibvars
 
 linters-settings:
+  errcheck:
+    exclude-functions:
+      - (go.uber.org/zap/zapcore.ObjectEncoder).AddObject
   misspell:
     locale: US
 
