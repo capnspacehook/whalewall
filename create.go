@@ -15,6 +15,7 @@ import (
 	"github.com/google/nftables"
 	"github.com/google/nftables/expr"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 	"golang.org/x/sys/unix"
@@ -690,9 +691,27 @@ type ruleDetails struct {
 	contID   string
 }
 
+func (r ruleDetails) MarshalLogObject(enc zapcore.ObjectEncoder) error {
+	enc.AddBool("inbound", r.inbound)
+	ip, ok := netip.AddrFromSlice(r.addr)
+	if !ok {
+		return errors.New("error parsing addr")
+	}
+	enc.AddString("container_addr", ip.String())
+	zap.Inline(r.cfg).AddTo(enc)
+	if r.chain != nil {
+		enc.AddString("chain", r.chain.Name)
+	}
+	if r.estChain != nil {
+		enc.AddString("est_chain", r.estChain.Name)
+	}
+
+	return nil
+}
+
 // createNFTRules returns a slice of [*nftables.Rule] described by rd.
 func (r *ruleManager) createNFTRules(rd ruleDetails) []*nftables.Rule {
-	r.logger.Sugar().Debugf("creating rule: %#v", rd)
+	r.logger.Debug("creating rule", zap.Object("rule", rd))
 
 	rules := make([]*nftables.Rule, 0, 3)
 	if rd.estChain == nil {

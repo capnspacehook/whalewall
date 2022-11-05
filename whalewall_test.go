@@ -1488,7 +1488,7 @@ mapped_ports:
 			firewallCreator := func() (firewallClient, error) {
 				return mfc, nil
 			}
-			r, err := newRuleManager(context.Background(), zap.NewNop(), t.TempDir(), defaultTimeout, dockerCreator, firewallCreator)
+			r, err := newRuleManager(context.Background(), logger, t.TempDir(), defaultTimeout, dockerCreator, firewallCreator)
 			is.NoErr(err)
 
 			// create new database and base rules

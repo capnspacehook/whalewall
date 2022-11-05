@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/netip"
 
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"go4.org/netipx"
 )
 
@@ -43,6 +45,26 @@ type ruleConfig struct {
 	Verdict   verdict
 }
 
+func (r ruleConfig) MarshalLogObject(enc zapcore.ObjectEncoder) error {
+	if r.LogPrefix != "" {
+		enc.AddString("log_prefix", r.LogPrefix)
+	}
+	if r.Network != "" {
+		enc.AddString("network", r.Network)
+	}
+	if r.IP.IsValid() {
+		zap.Inline(r.IP).AddTo(enc)
+	}
+	if r.Container != "" {
+		enc.AddString("container", r.Container)
+	}
+	enc.AddString("proto", r.Proto)
+	enc.AddUint16("port", r.Port)
+	enc.AddObject("verdict", r.Verdict)
+
+	return nil
+}
+
 type verdict struct {
 	Chain          string
 	Queue          uint16
@@ -52,9 +74,34 @@ type verdict struct {
 	drop bool
 }
 
+func (v verdict) MarshalLogObject(enc zapcore.ObjectEncoder) error {
+	if v.Chain != "" {
+		enc.AddString("chain", v.Chain)
+	}
+	if v.Queue != 0 {
+		enc.AddUint16("queue", v.Queue)
+	}
+	if v.InputEstQueue != 0 {
+		enc.AddUint16("input_est_queue", v.InputEstQueue)
+	}
+	if v.OutputEstQueue != 0 {
+		enc.AddUint16("output_est_queue", v.OutputEstQueue)
+	}
+	enc.AddBool("drop", v.drop)
+
+	return nil
+}
+
 type addrOrRange struct {
 	addr      netip.Addr
 	addrRange netipx.IPRange
+}
+
+func (a addrOrRange) MarshalText() ([]byte, error) {
+	if a.addr.IsValid() {
+		return a.addr.MarshalText()
+	}
+	return a.addrRange.MarshalText()
 }
 
 func (a *addrOrRange) UnmarshalText(text []byte) error {
@@ -70,6 +117,15 @@ func (a *addrOrRange) UnmarshalText(text []byte) error {
 		return a.addrRange.UnmarshalText(text)
 	}
 	return a.addr.UnmarshalText(text)
+}
+
+func (a addrOrRange) MarshalLogObject(enc zapcore.ObjectEncoder) error {
+	if a.addr.IsValid() {
+		enc.AddString("addr", a.addr.String())
+	} else {
+		enc.AddString("addrs", a.addrRange.String())
+	}
+	return nil
 }
 
 func (a *addrOrRange) IsValid() bool {
