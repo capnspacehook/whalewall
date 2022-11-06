@@ -71,6 +71,7 @@ jobs:
       - name: Ensure Docker image builds
         uses: docker/build-push-action@v3
         with:
+          load: true
           push: false
           tags: whalewall:test
 
