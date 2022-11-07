@@ -111,7 +111,10 @@ func mainRetCode() int {
 		return 1
 	}
 
-	<-ctx.Done()
+	select {
+	case <-ctx.Done():
+	case <-r.isDone():
+	}
 	logger.Info("shutting down")
 	r.stop()
 

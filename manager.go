@@ -16,7 +16,6 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/client"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 	_ "modernc.org/sqlite"
@@ -41,8 +40,9 @@ PRAGMA journal_mode=WAL;
 var dbSchema string
 
 type ruleManager struct {
-	wg   sync.WaitGroup
-	done chan struct{}
+	wg       sync.WaitGroup
+	stopping chan struct{}
+	done     chan struct{}
 
 	logger  *zap.Logger
 	timeout time.Duration
@@ -63,6 +63,7 @@ type firewallClientCreator func() (firewallClient, error)
 
 func newRuleManager(ctx context.Context, logger *zap.Logger, dataDir string, timeout time.Duration, dc dockerClientCreator, fc firewallClientCreator) (*ruleManager, error) {
 	r := ruleManager{
+		stopping:          make(chan struct{}),
 		done:              make(chan struct{}),
 		logger:            logger,
 		timeout:           timeout,
@@ -148,13 +149,18 @@ func (r *ruleManager) start(ctx context.Context) error {
 				if !errors.Is(err, io.EOF) {
 					r.logger.Error("error reading docker event stream", zap.Error(err))
 				}
-				r.logger.Info("recreating docker client")
-				r.dockerCli, err = client.NewClientWithOpts(client.FromEnv)
+				r.logger.Info("attempting to reconnect to docker daemon")
+				_, err = withTimeout(ctx, r.timeout, func(ctx context.Context) (types.Ping, error) {
+					return r.dockerCli.Ping(ctx)
+				})
 				if err != nil {
-					r.logger.Fatal("error creating docker client", zap.Error(err))
+					r.logger.Error("error connecting to docker daemon", zap.Error(err))
+					r.done <- struct{}{}
+					continue
 				}
+
 				messages, streamErrs = addFilters(ctx, r.dockerCli)
-			case <-r.done:
+			case <-r.stopping:
 				close(r.createCh)
 				close(r.deleteCh)
 				return
@@ -288,8 +294,12 @@ func addFilters(ctx context.Context, client dockerClient) (<-chan events.Message
 	return client.Events(ctx, types.EventsOptions{Filters: filter})
 }
 
+func (r *ruleManager) isDone() <-chan struct{} {
+	return r.done
+}
+
 func (r *ruleManager) stop() {
-	r.done <- struct{}{}
+	r.stopping <- struct{}{}
 	r.wg.Wait()
 
 	if err := r.dockerCli.Close(); err != nil {
