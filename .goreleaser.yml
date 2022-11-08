@@ -17,9 +17,10 @@ builds:
       - -buildmode=pie
       - -buildvcs=true
       - -trimpath
-    mod_timestamp: '{{ .CommitTimestamp }}'
     ldflags:
       - -s -w -X "main.version={{ .Tag }}"
+    main: ./cmd
+    mod_timestamp: '{{ .CommitTimestamp }}'
 
 archives:
   - id: binary-archive

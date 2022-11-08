@@ -1,7 +1,7 @@
 FROM golang:1.19.3-alpine AS builder
 
 COPY . /build
-WORKDIR /build
+WORKDIR /build/cmd
 
 # add git so VCS info will be stamped in binary
 RUN apk add --no-cache git=2.36.3-r0
@@ -14,7 +14,7 @@ RUN go build -buildmode pie -buildvcs=true -ldflags "-s -w -X main.version=${VER
 # pie-loader is built and scanned daily, we want the most recent version
 # hadolint ignore=DL3007
 FROM ghcr.io/capnspacehook/pie-loader:latest
-COPY --from=builder /build/whalewall /whalewall
+COPY --from=builder /build/cmd/whalewall /whalewall
 
 # apparently giving capabilities to containers doesn't work when the
 # container isn't running as root inside the container, see

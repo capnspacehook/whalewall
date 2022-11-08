@@ -1,4 +1,4 @@
-package main
+package whalewall
 
 import (
 	"bytes"
@@ -16,8 +16,8 @@ import (
 
 // clear initializes the database and removes all nftables rules created
 // by whalewall.
-func (r *ruleManager) clear(ctx context.Context, dataDir string) error {
-	if err := r.initDB(ctx, dataDir); err != nil {
+func (r *RuleManager) Clear(ctx context.Context, dbFile string) error {
+	if err := r.initDB(ctx, dbFile); err != nil {
 		return err
 	}
 
@@ -25,7 +25,7 @@ func (r *ruleManager) clear(ctx context.Context, dataDir string) error {
 }
 
 // clearRules removes all nftables rules created by whalewall.
-func (r *ruleManager) clearRules(ctx context.Context) error {
+func (r *RuleManager) clearRules(ctx context.Context) error {
 	// delete container chains
 	containers, err := r.db.GetContainers(ctx)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -86,7 +86,7 @@ func (r *ruleManager) clearRules(ctx context.Context) error {
 
 // cleanupRules removes nftables rules for containers that are now
 // stopped or were removed.
-func (r *ruleManager) cleanupRules(ctx context.Context) error {
+func (r *RuleManager) cleanupRules(ctx context.Context) error {
 	containers, err := r.db.GetContainers(ctx)
 	if err != nil {
 		return fmt.Errorf("error getting containers from database: %w", err)
@@ -118,7 +118,7 @@ func (r *ruleManager) cleanupRules(ctx context.Context) error {
 }
 
 // deleteRules removes nftables rules for stopped or killed containers.
-func (r *ruleManager) deleteRules(ctx context.Context) {
+func (r *RuleManager) deleteRules(ctx context.Context) {
 	for id := range r.deleteCh {
 		name, err := r.db.GetContainerName(ctx, id)
 		if err != nil {
@@ -137,7 +137,7 @@ func (r *ruleManager) deleteRules(ctx context.Context) {
 }
 
 // deleteContainerRules removes all nftables rules for a container.
-func (r *ruleManager) deleteContainerRules(ctx context.Context, id, name string) {
+func (r *RuleManager) deleteContainerRules(ctx context.Context, id, name string) {
 	logger := r.logger.With(zap.String("container.id", id[:12]), zap.String("container.name", name))
 	nfc, err := r.newFirewallClient()
 	if err != nil {

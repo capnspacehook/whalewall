@@ -1,4 +1,4 @@
-package main
+package whalewall
 
 import (
 	"errors"
@@ -80,7 +80,7 @@ var (
 	}
 )
 
-func (r *ruleManager) createBaseRules() error {
+func (r *RuleManager) createBaseRules() error {
 	nfc, err := r.newFirewallClient()
 	if err != nil {
 		return fmt.Errorf("error creating netlink connection: %w", err)

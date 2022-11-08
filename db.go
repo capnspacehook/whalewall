@@ -1,4 +1,4 @@
-package main
+package whalewall
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 
 //go:generate sqlc generate
 
-func (r *ruleManager) addContainer(ctx context.Context, logger *zap.Logger, id, name, service string, addrs map[string][]byte, estContainers map[string]struct{}) error {
+func (r *RuleManager) addContainer(ctx context.Context, logger *zap.Logger, id, name, service string, addrs map[string][]byte, estContainers map[string]struct{}) error {
 	tx, err := r.db.Begin(ctx, logger)
 	if err != nil {
 		return err
@@ -68,7 +68,7 @@ func (r *ruleManager) addContainer(ctx context.Context, logger *zap.Logger, id, 
 	return tx.Commit(ctx)
 }
 
-func (r *ruleManager) deleteContainer(ctx context.Context, logger *zap.Logger, id string) error {
+func (r *RuleManager) deleteContainer(ctx context.Context, logger *zap.Logger, id string) error {
 	tx, err := r.db.Begin(ctx, logger)
 	if err != nil {
 		return err

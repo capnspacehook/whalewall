@@ -1,4 +1,4 @@
-package main
+package whalewall
 
 import (
 	"context"
@@ -16,6 +16,8 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/client"
+	"github.com/google/nftables"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 	_ "modernc.org/sqlite"
@@ -24,7 +26,6 @@ import (
 )
 
 const (
-	dbFilename = "db.sqlite"
 	dbCommands = `
 PRAGMA busy_timeout = 1000;
 PRAGMA journal_mode=WAL;
@@ -39,7 +40,7 @@ PRAGMA journal_mode=WAL;
 //go:embed database/schema.sql
 var dbSchema string
 
-type ruleManager struct {
+type RuleManager struct {
 	wg       sync.WaitGroup
 	stopping chan struct{}
 	done     chan struct{}
@@ -61,16 +62,20 @@ type dockerClientCreator func() (dockerClient, error)
 
 type firewallClientCreator func() (firewallClient, error)
 
-func newRuleManager(ctx context.Context, logger *zap.Logger, dataDir string, timeout time.Duration, dc dockerClientCreator, fc firewallClientCreator) (*ruleManager, error) {
-	r := ruleManager{
-		stopping:          make(chan struct{}),
-		done:              make(chan struct{}),
-		logger:            logger,
-		timeout:           timeout,
-		newDockerClient:   dc,
-		newFirewallClient: fc,
+func NewRuleManager(ctx context.Context, logger *zap.Logger, dbFile string, timeout time.Duration) (*RuleManager, error) {
+	r := RuleManager{
+		stopping: make(chan struct{}),
+		done:     make(chan struct{}),
+		logger:   logger,
+		timeout:  timeout,
+		newDockerClient: func() (dockerClient, error) {
+			return client.NewClientWithOpts(client.FromEnv)
+		},
+		newFirewallClient: func() (firewallClient, error) {
+			return nftables.New()
+		},
 	}
-	err := r.initDB(ctx, dataDir)
+	err := r.initDB(ctx, dbFile)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +83,15 @@ func newRuleManager(ctx context.Context, logger *zap.Logger, dataDir string, tim
 	return &r, nil
 }
 
-func (r *ruleManager) start(ctx context.Context) error {
+func (r *RuleManager) setDockerClientCreator(dc dockerClientCreator) {
+	r.newDockerClient = dc
+}
+
+func (r *RuleManager) setFirewallClientCreator(fc firewallClientCreator) {
+	r.newFirewallClient = fc
+}
+
+func (r *RuleManager) Start(ctx context.Context) error {
 	if err := r.init(ctx); err != nil {
 		return err
 	}
@@ -171,7 +184,7 @@ func (r *ruleManager) start(ctx context.Context) error {
 	return nil
 }
 
-func (r *ruleManager) init(ctx context.Context) error {
+func (r *RuleManager) init(ctx context.Context) error {
 	dockerCli, err := r.newDockerClient()
 	if err != nil {
 		return fmt.Errorf("error creating docker client: %w", err)
@@ -186,28 +199,22 @@ func (r *ruleManager) init(ctx context.Context) error {
 	return nil
 }
 
-func (r *ruleManager) initDB(ctx context.Context, dataDir string) error {
+func (r *RuleManager) initDB(ctx context.Context, dbFile string) error {
 	// create data directory if it doesn't exist
-	dataDir, err := filepath.Abs(dataDir)
-	if err != nil {
-		return err
-	}
-	_, err = os.Stat(dataDir)
-	if err != nil {
+	dbDir := filepath.Dir(dbFile)
+	if _, err := os.Stat(dbDir); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			r.logger.Info("creating data directory", zap.String("data.dir", dataDir))
-			if err := os.MkdirAll(dataDir, 0o750); err != nil {
+			r.logger.Info("creating data directory", zap.String("data.dir", dbDir))
+			if err := os.MkdirAll(dbDir, 0o750); err != nil {
 				return fmt.Errorf("error creating data directory: %w", err)
 			}
 		} else {
 			return err
 		}
 	}
-	dbFile := filepath.Join(dataDir, dbFilename)
 
 	var dbNotExist bool
-	_, err = os.Stat(dbFile)
-	if err != nil {
+	if _, err := os.Stat(dbFile); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			dbNotExist = true
 		} else {
@@ -294,11 +301,11 @@ func addFilters(ctx context.Context, client dockerClient) (<-chan events.Message
 	return client.Events(ctx, types.EventsOptions{Filters: filter})
 }
 
-func (r *ruleManager) isDone() <-chan struct{} {
+func (r *RuleManager) Done() <-chan struct{} {
 	return r.done
 }
 
-func (r *ruleManager) stop() {
+func (r *RuleManager) Stop() {
 	r.stopping <- struct{}{}
 	r.wg.Wait()
 

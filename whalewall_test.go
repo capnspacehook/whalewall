@@ -1,4 +1,4 @@
-package main
+package whalewall
 
 import (
 	"context"
@@ -8,13 +8,13 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/nftables"
@@ -24,6 +24,8 @@ import (
 	"go4.org/netipx"
 	"golang.org/x/sys/unix"
 )
+
+const defaultTimeout = 3 * time.Second
 
 var (
 	binaryTests     = flag.Bool("binary-tests", false, "use compiled binary to test with landlock and seccomp enabled")
@@ -130,15 +132,10 @@ func startFunc(t *testing.T, is *is.I) {
 	is.NoErr(err)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	dockerCreator := func() (dockerClient, error) {
-		return client.NewClientWithOpts(client.FromEnv)
-	}
-	firewallCreator := func() (firewallClient, error) {
-		return nftables.New()
-	}
-	r, err := newRuleManager(ctx, logger, t.TempDir(), defaultTimeout, dockerCreator, firewallCreator)
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	r, err := NewRuleManager(ctx, logger, dbFile, defaultTimeout)
 	is.NoErr(err)
-	err = r.start(ctx)
+	err = r.Start(ctx)
 	is.NoErr(err)
 	t.Cleanup(func() {
 		err = r.clearRules(ctx)
@@ -146,7 +143,7 @@ func startFunc(t *testing.T, is *is.I) {
 			t.Logf("error cleaning rules: %v", err)
 		}
 		cancel()
-		r.stop()
+		r.Stop()
 	})
 }
 
@@ -1518,14 +1515,16 @@ mapped_ports:
 			})
 			is.NoErr(mfc.Flush())
 
-			dockerCreator := func() (dockerClient, error) {
-				return newMockDockerClient(tt.containers), nil
-			}
-			firewallCreator := func() (firewallClient, error) {
-				return mfc, nil
-			}
-			r, err := newRuleManager(context.Background(), logger, t.TempDir(), defaultTimeout, dockerCreator, firewallCreator)
+			dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+			r, err := NewRuleManager(context.Background(), logger, dbFile, defaultTimeout)
 			is.NoErr(err)
+
+			r.setDockerClientCreator(func() (dockerClient, error) {
+				return newMockDockerClient(tt.containers), nil
+			})
+			r.setFirewallClientCreator(func() (firewallClient, error) {
+				return mfc, nil
+			})
 
 			// create new database and base rules
 			err = r.init(context.Background())

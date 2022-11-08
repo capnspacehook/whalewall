@@ -1,4 +1,4 @@
-package main
+package whalewall
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 
 const composeDependsLabel = "com.docker.compose.depends_on"
 
-func (r *ruleManager) syncContainers(ctx context.Context) error {
+func (r *RuleManager) syncContainers(ctx context.Context) error {
 	filter := filters.NewArgs(filters.KeyValuePair{
 		Key:   "label",
 		Value: enabledLabel,

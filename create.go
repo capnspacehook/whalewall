@@ -1,4 +1,4 @@
-package main
+package whalewall
 
 import (
 	"context"
@@ -55,7 +55,7 @@ var (
 )
 
 // createRules adds nftables rules for started containers.
-func (r *ruleManager) createRules(ctx context.Context) {
+func (r *RuleManager) createRules(ctx context.Context) {
 	for container := range r.createCh {
 		if err := r.createContainerRules(ctx, container); err != nil {
 			if errors.Is(err, errShuttingDown) {
@@ -71,7 +71,7 @@ func (r *ruleManager) createRules(ctx context.Context) {
 }
 
 // createContainerRules adds nftables rules for a container.
-func (r *ruleManager) createContainerRules(ctx context.Context, container types.ContainerJSON) error {
+func (r *RuleManager) createContainerRules(ctx context.Context, container types.ContainerJSON) error {
 	contName := stripName(container.Name)
 	logger := r.logger.With(zap.String("container.id", container.ID[:12]), zap.String("container.name", contName))
 
@@ -212,7 +212,7 @@ func stripName(name string) string {
 
 // populateOutputRules attempts to find the IPs of containers specified
 // in output rules and fills the rules appropriately.
-func (r *ruleManager) populateOutputRules(ctx context.Context, cfg config, project string, addrs map[string][]byte, estContainers map[string]struct{}) error {
+func (r *RuleManager) populateOutputRules(ctx context.Context, cfg config, project string, addrs map[string][]byte, estContainers map[string]struct{}) error {
 	// only get a list of containers if at least one rule specifies a
 	// container
 	i := slices.IndexFunc(cfg.Output, func(r ruleConfig) bool {
@@ -387,7 +387,7 @@ func containerNameMatches(expectedName string, labels map[string]string, names .
 // waiting for a container start event times out. This is necessary when
 // creating rules for a container that depends on another container which
 // isn't started yet.
-func (r *ruleManager) processRequiredContainers(ctx context.Context, contName string) (bool, error) {
+func (r *RuleManager) processRequiredContainers(ctx context.Context, contName string) (bool, error) {
 	found := false
 	timer := time.NewTimer(r.timeout)
 
@@ -426,7 +426,7 @@ func buildChainName(name, id string) string {
 
 // createPortMappingRules adds nftables rules to allow or deny access to
 // mapped ports.
-func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types.ContainerJSON, contName string, mappedPortsCfg mappedPorts, addrs map[string][]byte, chain *nftables.Chain, nftRules []*nftables.Rule) ([]*nftables.Rule, []*nftables.Rule, error) {
+func (r *RuleManager) createPortMappingRules(logger *zap.Logger, container types.ContainerJSON, contName string, mappedPortsCfg mappedPorts, addrs map[string][]byte, chain *nftables.Chain, nftRules []*nftables.Rule) ([]*nftables.Rule, []*nftables.Rule, error) {
 	// check if there are any mapped ports to create rules for
 	var hasMappedPorts bool
 	for _, hostPorts := range container.NetworkSettings.Ports {
@@ -589,7 +589,7 @@ func (r *ruleManager) createPortMappingRules(logger *zap.Logger, container types
 
 // createOutputRules adds nftables rules to allow outbound access from
 // a container.
-func (r *ruleManager) createOutputRules(ctx context.Context, ruleCfgs []ruleConfig, project string, addrs map[string][]byte, chain *nftables.Chain, name, id string, nftRules []*nftables.Rule) ([]*nftables.Rule, error) {
+func (r *RuleManager) createOutputRules(ctx context.Context, ruleCfgs []ruleConfig, project string, addrs map[string][]byte, chain *nftables.Chain, name, id string, nftRules []*nftables.Rule) ([]*nftables.Rule, error) {
 	for _, ruleCfg := range ruleCfgs {
 		// prepend container name and ID to log prefixes
 		if ruleCfg.LogPrefix != "" {
@@ -652,7 +652,7 @@ func (r *ruleManager) createOutputRules(ctx context.Context, ruleCfgs []ruleConf
 
 // getContainerIDAndName returns the ID and canonical name of a container
 // if it is present in the database.
-func (r *ruleManager) getContainerIDAndName(ctx context.Context, contName string) (string, string, error) {
+func (r *RuleManager) getContainerIDAndName(ctx context.Context, contName string) (string, string, error) {
 	name := contName
 
 	id, err := r.db.GetContainerID(ctx, contName)
@@ -710,7 +710,7 @@ func (r ruleDetails) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 }
 
 // createNFTRules returns a slice of [*nftables.Rule] described by rd.
-func (r *ruleManager) createNFTRules(rd ruleDetails) []*nftables.Rule {
+func (r *RuleManager) createNFTRules(rd ruleDetails) []*nftables.Rule {
 	r.logger.Debug("creating rule", zap.Object("rule", rd))
 
 	rules := make([]*nftables.Rule, 0, 3)

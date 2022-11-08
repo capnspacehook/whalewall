@@ -29,10 +29,6 @@ jobs:
           check-latest: true
           cache: true
 
-      - name: Ensure main package builds
-        run: |
-          go build
-
       # the test is compiled and run as root so that whalewall can
       # interface with nftables, which is a privileged operation
       - run: |
@@ -55,7 +51,9 @@ jobs:
       # run the same tests as above but use a binary to create rules
       # to test with landlock and seccomp filters active
       - run: |
-          CGO_ENABLED=0 go build -o whalewall
+          cd cmd
+          CGO_ENABLED=0 go build -o ../whalewall
+          cd ..
           go test -c -o whalewall.test
           sudo ./whalewall.test -binary-tests -test.timeout 5m -test.v
 

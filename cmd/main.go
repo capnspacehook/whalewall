@@ -12,15 +12,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/docker/docker/client"
-	"github.com/google/nftables"
 	"github.com/landlock-lsm/go-landlock/landlock"
 	llsyscall "github.com/landlock-lsm/go-landlock/landlock/syscall"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/capnspacehook/whalewall"
 )
 
-const defaultTimeout = 10 * time.Second
+const dbFilename = "db.sqlite"
 
 func main() {
 	os.Exit(mainRetCode())
@@ -31,7 +31,7 @@ func mainRetCode() int {
 	dataDir := flag.String("d", ".", "directory to store state in")
 	debugLogs := flag.Bool("debug", false, "enable debug logging")
 	logPath := flag.String("l", "stdout", "path to log to")
-	timeout := flag.Duration("t", defaultTimeout, "timeout for Docker API requests")
+	timeout := flag.Duration("t", 10*time.Second, "timeout for Docker API requests")
 	displayVersion := flag.Bool("version", false, "print version and build information and exit")
 	flag.Parse()
 
@@ -63,28 +63,29 @@ func mainRetCode() int {
 	}
 
 	// create rule manager and drop unneeded privileges
+	dataDirAbs, err := filepath.Abs(*dataDir)
+	if err != nil {
+		logger.Error("error getting absolute path", zap.String("path", *dataDir), zap.Error(err))
+		return 1
+	}
+	sqliteFile := filepath.Join(dataDirAbs, dbFilename)
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	dockerCreator := func() (dockerClient, error) {
-		return client.NewClientWithOpts(client.FromEnv)
-	}
-	firewallCreator := func() (firewallClient, error) {
-		return nftables.New()
-	}
-	r, err := newRuleManager(ctx, logger, *dataDir, *timeout, dockerCreator, firewallCreator)
+	r, err := whalewall.NewRuleManager(ctx, logger, sqliteFile, *timeout)
 	if err != nil {
 		logger.Error("error initializing", zap.Error(err))
 	}
 
-	if !restrictPrivileges(logger, *dataDir, *logPath) {
+	if !restrictPrivileges(logger, sqliteFile, *logPath) {
 		return 1
 	}
 
 	// remove all created firewall rules if the user asked to clear
 	if *clear {
 		logger.Info("clearing rules")
-		if err := r.clear(ctx, *dataDir); err != nil {
+		if err := r.Clear(ctx, sqliteFile); err != nil {
 			logger.Error("error clearing rules", zap.Error(err))
 			return 1
 		}
@@ -106,32 +107,26 @@ func mainRetCode() int {
 	logger.Info("starting whalewall", versionFields...)
 
 	// start managing firewall rules
-	if err = r.start(ctx); err != nil {
+	if err = r.Start(ctx); err != nil {
 		logger.Error("error starting", zap.Error(err))
 		return 1
 	}
 
 	select {
 	case <-ctx.Done():
-	case <-r.isDone():
+	case <-r.Done():
 	}
 	logger.Info("shutting down")
-	r.stop()
+	r.Stop()
 
 	return 0
 }
 
-func restrictPrivileges(logger *zap.Logger, dataDir, logPath string) bool {
+func restrictPrivileges(logger *zap.Logger, sqliteFile, logPath string) bool {
 	// only allow needed files to be read/written to
-	dataDirAbs, err := filepath.Abs(dataDir)
-	if err != nil {
-		logger.Error("error getting absolute path", zap.String("path", dataDir), zap.Error(err))
-		return false
-	}
-	sqliteFile := filepath.Join(dataDirAbs, dbFilename)
 	// TODO: test with docker with TLS
 	allowedPaths := []landlock.PathOpt{
-		landlock.RODirs(dataDir),
+		landlock.RODirs(filepath.Dir(sqliteFile)),
 		landlock.RWFiles(
 			sqliteFile,
 			sqliteFile+"-wal",
@@ -159,7 +154,7 @@ func restrictPrivileges(logger *zap.Logger, dataDir, logPath string) bool {
 		}
 	}
 
-	err = landlock.V1.RestrictPaths(
+	err := landlock.V1.RestrictPaths(
 		allowedPaths...,
 	)
 	if err != nil {
