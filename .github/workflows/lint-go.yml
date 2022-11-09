@@ -55,10 +55,11 @@ jobs:
 
       - name: Ensure 'go generate' is clean
         run: |
-          go generate "$(go list ./...)"
+          go generate -v -x "$(go list ./...)"
           echo
           echo
-          
+
+          git diff --name-only --exit-code
           if ! git diff --name-only --exit-code; then
             echo "The files above need updating. Please run 'go generate'."
             exit 1
