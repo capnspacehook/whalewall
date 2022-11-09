@@ -55,7 +55,7 @@ jobs:
 
       - name: Ensure 'go generate' is clean
         run: |
-          go generate -v -x $(go list ./...)
+          go generate $(go list ./...)
           echo
           echo
 
