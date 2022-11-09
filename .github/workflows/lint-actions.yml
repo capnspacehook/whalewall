@@ -28,4 +28,4 @@ jobs:
         run: |
           echo "::add-matcher::.github/actionlint-matcher.json"
           go install github.com/rhysd/actionlint/cmd/actionlint@latest
-          actionlint
+          actionlint -ignore SC2046
