@@ -35,6 +35,10 @@ linters-settings:
       - (go.uber.org/zap/zapcore.ObjectEncoder).AddObject
   misspell:
     locale: US
+  revive:
+    rules:
+      - name: blank-imports
+        disabled: true
 
 run:
   timeout: 5m
