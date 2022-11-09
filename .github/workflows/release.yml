@@ -103,6 +103,15 @@ jobs:
         id: get-tag
         uses: olegtarasov/get-tag@v2.1
 
+      - name: Set build arguments
+        id: build-args
+        run: |
+          VERSION=${{ steps.get-tag.outputs.tag }}
+          if [[ -z ${VERSION} ]]; then
+            VERSION=devel
+          fi
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+
       - name: Build and push Docker image
         id: build-push
         uses: docker/build-push-action@v3
@@ -110,7 +119,7 @@ jobs:
           context: .
           push: true
           build-args: |
-            VERSION=${{ steps.get-tag.outputs.tag }}
+            VERSION=${{ steps.build-args.outputs.version }}
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
 
