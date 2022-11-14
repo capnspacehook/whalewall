@@ -1,6 +1,6 @@
 # whalewall
 
-Easily mange firewall rules for docker containers.
+Automate management of firewall rules for Docker containers.
 
 ## Requirements
 
