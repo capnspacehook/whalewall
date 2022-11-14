@@ -1,13 +1,10 @@
 # whalewall
 
-`go install github.com/capnspacehook/whalewall@latest`
-
 Easily mange firewall rules for docker containers.
 
 ## Requirements
 
-Linux with a recent kernel, around 5.10 or newer. Tested with nftables v1.0.2 and Docker 20.10.18,
-though I'm sure some older versions of both will work with whalewall.
+Linux with a recent kernel, around 5.10 or newer.
 
 ## Purpose
 
@@ -16,7 +13,7 @@ rules. There are two main ways to get around this:
 
 1. Prevent Docker from creating any iptables rules by setting `"iptables": false` in `/etc/docker/daemon.json`
     - This is the nuclear approach. It will break most networking for containers, and require that
-    you manage iptables for containers manually, which is a very involved process.
+    you manage iptables for containers manually, which can be a very involved process.
 2. Add rules to the `DOCKER-USER` iptables chain
     - Docker ensures that rules in this chain are processed *before* any rules Docker creates.
 
@@ -29,7 +26,8 @@ are created or killed, which would be very tedious and error-prone manually.
 
 ## Mechanism
 
-Whalewall listens for Docker container `start` and `kill` events and creates or deletes nftables
+Whalewall listens for Docker container `start` and `kill` events and creates or deletes
+[nftables](https://wiki.nftables.org/wiki-nftables/index.php/What_is_nftables%3F)
 rules appropriately. Why is nftables used instead of iptables? A few reasons:
 
 - nftables can be configured programmatically unlike iptables, removing the need for whalewall to
@@ -39,11 +37,63 @@ traffic matching in the kernel
 - In most distros, iptables rules are translated to nftables rules under the hood, making iptables
 rules compatible with nftables rules
 
+Whalewall stores details of containers it is managing rules for in a SQLite database. If containers
+are started or stopped while whalewall isn't running, whalewall will compare currently running
+containers to what was last saved to the database and create/delete firewall rules appropriately.
+
 ## Security
 
 Whalewall needs the `NET_ADMIN` capability to manage nftables rules. It also needs to be a member
 of the `docker` group in order to use `/var/run/docker/docker.sock` to receive events from the
 local Docker daemon.
+
+To reduce attack surface, [landlock](https://docs.kernel.org/userspace-api/landlock.html) and
+[seccomp](https://docs.kernel.org/next/userspace-api/seccomp_filter.html) are leveraged to ensure
+only files and syscalls required by whalewall can be accessed and called respectively. This vastly
+limits what whalewall is able to do in the event an attacker is able to execute code in the context
+of its process. However, this will not prevent said attacker from taking advantage of the Docker
+socket whalewall has access to which can trivially lead to privilege escalation.
+
+## Installation
+
+### Docker image
+
+Download the Docker image:
+
+```sh
+docker pull ghcr.io/capnspacehook/whalewall:0.2.0
+```
+
+Ensure whalewall is given necessary permissions, and that it is using `host` network mode. This
+allows the whalewall container to modify host firewall rules.
+
+Example Docker compose file:
+
+```yaml
+version: "3"
+services:
+  whalewall:
+    cap_add: 
+      - NET_ADMIN
+    image: ghcr.io/capnspacehook/whalewall
+    network_mode: host
+    volumes:
+      - whalewall_data:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+volumes:
+  whalewall_data:
+```
+
+### Binary install
+
+If you want to run whalewall natively, download a release binary.
+
+Or if you want to compile from source, assuming you have Go 1.19 installed:
+
+```sh
+go install github.com/capnspacehook/whalewall/cmd@latest
+```
 
 After installing whalewall, grant it required permissions by running:
 
@@ -69,7 +119,7 @@ The contents of the `whalewall.rules` label is a yaml config.
 Whalewall creates rules with a default drop policy, meaning any traffic not explicitly allowed will
 be dropped.
 
-## Example
+### Example
 
 Below is an example Docker compose file that configures [Miniflux](https://github.com/miniflux/v2),
 a feed reader. Miniflux needs to connect to a Postgresql database to store state and make outbound
@@ -129,7 +179,7 @@ services:
 Note to make this Docker compose config as concise as possible, best practices were not followed.
 This is merely intended to be an example of whalewall rules, not how to setup Miniflux securely.
 
-## Rules config reference
+### Rules config reference
 
 ```yaml
 # controls traffic from localhost or external networks to a container on mapped ports
@@ -205,7 +255,7 @@ output:
       output_est_queue: 0
 ```
 
-## Tips
+### Tips
 
 - Logged traffic is sent to the kernel log file, typically `/var/log/kern.log` for Debian based distros
 and `/var/log/messages` for RHEL based distros
@@ -213,3 +263,32 @@ and `/var/log/messages` for RHEL based distros
 of the `docker0` network interface, which is often `172.17.0.1`
 - If no Docker networks are explicitly created, use the `default` network when creating container to
 container rules
+
+## Verifying releases
+
+Starting from v0.2.0, all Docker images and binary checksum files are signed. You can verify
+images or released binaries to ensure they were not tampered with.
+
+Verifying Docker images or binaries both require [cosign](https://github.com/sigstore/cosign).
+
+### Verifying Docker images
+
+Simply check the signature of the image with `cosign`:
+
+```sh
+COSIGN_EXPERIMENTAL=true cosign verify ghcr.io/capnspacehook/whalewall:0.2.0 | jq
+```
+
+You can verify the image was built by Github Actions by inspecting the `Issuer` and `Subject` fields of the output.
+
+### Verifying binaries
+
+Download the checksums file, certificate, signature and the archive to the same directory.
+
+Extract the binary from the archive, verify the checksums file and verify the contents of the binary:
+
+```sh
+tar xfs whalewall_0.2.0_linux_amd64.tar.gz
+cosign verify-blob --certificate checksums.txt.crt --signature checksums.txt.sig checksums.txt
+sha256sum -c checksums.txt
+```
