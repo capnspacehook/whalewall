@@ -23,5 +23,5 @@
 
 *.log
 
-whalewall
+./cmd/whalewall/whalewall
 db.sqlite*

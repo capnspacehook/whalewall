@@ -19,7 +19,7 @@ builds:
       - -trimpath
     ldflags:
       - -s -w -X "main.version={{ .Tag }}"
-    main: ./cmd
+    main: ./cmd/whalewall
     mod_timestamp: '{{ .CommitTimestamp }}'
 
 archives:

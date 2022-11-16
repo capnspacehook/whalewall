@@ -92,7 +92,7 @@ If you want to run whalewall natively, download a release binary.
 Or if you want to compile from source, assuming you have Go 1.19 installed:
 
 ```sh
-go install github.com/capnspacehook/whalewall/cmd@latest
+go install github.com/capnspacehook/whalewall/cmd/whalewall@latest
 ```
 
 After installing whalewall, grant it required permissions by running:
