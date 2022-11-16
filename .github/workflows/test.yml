@@ -51,9 +51,9 @@ jobs:
       # run the same tests as above but use a binary to create rules
       # to test with landlock and seccomp filters active
       - run: |
-          cd cmd
-          CGO_ENABLED=0 go build -o ../whalewall
-          cd ..
+          cd cmd/whalewall
+          CGO_ENABLED=0 go build -o ../../whalewall
+          cd ../../
           go test -c -o whalewall.test
           sudo ./whalewall.test -binary-tests -test.timeout 5m -test.v
 
