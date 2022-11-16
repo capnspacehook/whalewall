@@ -55,6 +55,7 @@ jobs:
 
       - name: Ensure 'go generate' is clean
         run: |
+          # shellcheck disable=SC2046
           go generate $(go list ./...)
           echo
           echo
