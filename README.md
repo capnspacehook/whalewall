@@ -8,7 +8,7 @@ Linux with a recent kernel, around 5.10 or newer.
 
 ## Purpose
 
-Docker by default creates iptables rules to handle container traffic that override any user-set
+Docker by default creates iptables rules to handle container traffic that override almost all user-set
 rules. There are two main ways to get around this:
 
 1. Prevent Docker from creating any iptables rules by setting `"iptables": false` in `/etc/docker/daemon.json`
@@ -22,7 +22,9 @@ than it needs to. You may be wondering if whalewall is necessary, after all it i
 firewall rules to the `DOCKER-USER` chain yourself. Well, Docker containers and networks are ephemeral,
 meaning every time a container or network is destroyed and recreated, the IP address and subnet
 respectively will be randomized. Whalewall takes care of creating or deleting rules when containers
-are created or killed, which would be very tedious and error-prone manually.
+are created or killed, which would be very tedious and error-prone manually. Finally, as well as
+managing firewall rules to limit traffic to and from localhost and external interfaces, whalewall
+can also enforce container network isolation by limiting traffic between containers.
 
 ## Mechanism
 
@@ -108,8 +110,8 @@ setcap 'cap_net_admin=+ep' whalewall
 
 Whalewall uses Docker labels for configuration:
 
-- `whalewall.enabled` is used to enable or disable firewall rules for a container. If this rule is
-not present and set to `true` for a container whalewall will not create any firewall rules for it.
+- `whalewall.enabled` is used to enable or disable firewall rules for a container. If this label is
+not present and set to `true` for a container, whalewall will not create any firewall rules for it.
 - `whalewall.rules` specifies the firewall rules for a container. If this label is not specified but
 `whalewall.enabled=true` is, no traffic will be allowed to or from the container (unless another
 container has an output rule for this container).
