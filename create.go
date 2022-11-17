@@ -468,6 +468,12 @@ func (r *RuleManager) createPortMappingRules(logger *zap.Logger, container types
 		for _, port := range ports {
 			hostPorts := container.NetworkSettings.Ports[port]
 			localAllowed := mappedPortsCfg.Localhost.Allow
+
+			var proto protocol
+			if err := proto.UnmarshalText([]byte(port.Proto())); err != nil {
+				return nil, nil, fmt.Errorf("error parsing protocol: %w", err)
+			}
+
 			for _, hostPort := range hostPorts {
 				addr, err := netip.ParseAddr(hostPort.HostIP)
 				if err != nil {
@@ -510,7 +516,7 @@ func (r *RuleManager) createPortMappingRules(logger *zap.Logger, container types
 							IP: addrOrRange{
 								addr: gateway,
 							},
-							Proto:   port.Proto(),
+							Proto:   proto,
 							Port:    uint16(port.Int()),
 							Verdict: mappedPortsCfg.Localhost.Verdict,
 						},
@@ -538,7 +544,7 @@ func (r *RuleManager) createPortMappingRules(logger *zap.Logger, container types
 							IP: addrOrRange{
 								addr: localAddr,
 							},
-							Proto: port.Proto(),
+							Proto: proto,
 							Port:  uint16(hostPortInt),
 							Verdict: verdict{
 								drop: true,
@@ -565,7 +571,7 @@ func (r *RuleManager) createPortMappingRules(logger *zap.Logger, container types
 					cfg: ruleConfig{
 						LogPrefix: mappedPortsCfg.External.LogPrefix,
 						IP:        mappedPortsCfg.External.IP,
-						Proto:     port.Proto(),
+						Proto:     proto,
 						Port:      uint16(port.Int()),
 						Verdict:   mappedPortsCfg.External.Verdict,
 					},
@@ -792,7 +798,7 @@ func createNFTRule(inbound bool, portOffset, state uint32, addr []byte, cfg rule
 		cfgAddrOffset = srcAddrOffset
 	}
 	proto := unix.IPPROTO_TCP
-	if cfg.Proto == "udp" {
+	if cfg.Proto == udp {
 		proto = unix.IPPROTO_UDP
 	}
 
@@ -831,7 +837,7 @@ func createNFTRule(inbound bool, portOffset, state uint32, addr []byte, cfg rule
 	} else if len(addr) != 0 {
 		exprs = append(exprs, matchIPExprs(addr, addrOffset)...)
 	}
-	if cfg.Proto != "" {
+	if cfg.Proto != invalidProto {
 		exprs = append(exprs, matchProtoExprs(proto)...)
 	}
 	if cfg.Port != 0 {

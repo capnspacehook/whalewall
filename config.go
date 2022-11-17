@@ -40,7 +40,7 @@ type ruleConfig struct {
 	Network   string
 	IP        addrOrRange
 	Container string
-	Proto     string
+	Proto     protocol
 	Port      uint16
 	Verdict   verdict
 }
@@ -58,7 +58,7 @@ func (r ruleConfig) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 	if r.Container != "" {
 		enc.AddString("container", r.Container)
 	}
-	enc.AddString("proto", r.Proto)
+	enc.AddString("proto", r.Proto.String())
 	enc.AddUint16("port", r.Port)
 	enc.AddObject("verdict", r.Verdict)
 
@@ -140,6 +140,52 @@ func (a *addrOrRange) Range() (netip.Addr, netip.Addr, bool) {
 	return a.addrRange.From(), a.addrRange.To(), a.addrRange.IsValid()
 }
 
+type protocol uint8
+
+const (
+	invalidProto protocol = iota
+	tcp
+	udp
+)
+
+func (p protocol) MarshalText() ([]byte, error) {
+	switch p {
+	case invalidProto:
+		return nil, errors.New("invalid protocol")
+	case tcp:
+		return []byte("tcp"), nil
+	case udp:
+		return []byte("udp"), nil
+	default:
+		panic("unreachable")
+	}
+}
+
+func (p *protocol) UnmarshalText(text []byte) error {
+	switch {
+	case bytes.Equal(text, []byte("tcp")):
+		*p = tcp
+	case bytes.Equal(text, []byte("udp")):
+		*p = udp
+	default:
+		return fmt.Errorf("invalid protocol %q", string(text))
+	}
+	return nil
+}
+
+func (p protocol) String() string {
+	switch p {
+	case invalidProto:
+		return "invalid protocol"
+	case tcp:
+		return "tcp"
+	case udp:
+		return "udp"
+	default:
+		return fmt.Sprintf("proto(%d)", p)
+	}
+}
+
 func validateConfig(c config) error {
 	for i, r := range c.Output {
 		err := validateRule(r)
@@ -152,7 +198,7 @@ func validateConfig(c config) error {
 }
 
 func validateRule(r ruleConfig) error {
-	if !r.IP.IsValid() && r.Container == "" && r.Proto == "" && r.Port == 0 {
+	if !r.IP.IsValid() && r.Container == "" && r.Proto == invalidProto && r.Port == 0 {
 		return errors.New("rule is empty")
 	}
 	if r.IP.IsValid() && r.Container != "" {
@@ -161,14 +207,11 @@ func validateRule(r ruleConfig) error {
 	if r.Network == "" && r.Container != "" {
 		return errors.New(`"network" must be set when "container" is set`)
 	}
-	if r.Port != 0 && r.Proto == "" {
+	if r.Port != 0 && r.Proto == invalidProto {
 		return errors.New(`"proto" must be set when "port" is set`)
 	}
-	if r.Proto == "" && r.Port != 0 {
+	if r.Proto == invalidProto && r.Port != 0 {
 		return errors.New(`"port" must be set when "proto" is set`)
-	}
-	if r.Proto != "" && r.Proto != "tcp" && r.Proto != "udp" {
-		return fmt.Errorf("unknown protocol %q", r.Proto)
 	}
 
 	return validateVerdict(r.Verdict)

@@ -29,6 +29,7 @@ type firewallClient interface {
 	Flush() error
 }
 
+// TODO: create slice of functions that will run on a Flush()
 type mockFirewall struct {
 	logger *zap.SugaredLogger
 
