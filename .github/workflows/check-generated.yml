@@ -1,4 +1,4 @@
-name: Vulnerability scan
+name: Check generated files
 
 on:
   push:
@@ -16,7 +16,7 @@ env:
   GO_VERSION: "1.19"
 
 jobs:
-  govulncheck:
+  check-go-generate:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -30,7 +30,17 @@ jobs:
           check-latest: true
           cache: true
 
-      - name: Scan for known vulnerable dependencies
+      - run: |
+          go install github.com/kyleconroy/sqlc/cmd/sqlc@latest
+
+      - name: Ensure 'go generate' is clean
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck -v ./...
+          # shellcheck disable=SC2046
+          go generate $(go list ./...)
+          echo
+          echo
+
+          if ! git diff --name-only --exit-code; then
+            echo "The files above need updating. Please run 'go generate'."
+            exit 1
+          fi
