@@ -4,7 +4,9 @@ COPY . /build
 WORKDIR /build/cmd/whalewall
 
 # add git so VCS info will be stamped in binary
-RUN apk add --no-cache git=2.36.3-r0
+# ignore warning that a specific version of git isn't pinned
+# hadolint ignore=DL3018
+RUN apk add --no-cache git
 
 # build as PIE to take advantage of exploit mitigations
 ARG CGO_ENABLED=0
