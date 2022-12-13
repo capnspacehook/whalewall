@@ -38,7 +38,7 @@ jobs:
         uses: sigstore/cosign-installer@main
 
       - name: Build and release with goreleaser
-        uses: goreleaser/goreleaser-action@v3
+        uses: goreleaser/goreleaser-action@v4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
