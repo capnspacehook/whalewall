@@ -28,7 +28,7 @@ can also enforce container network isolation by limiting traffic between contain
 
 ## Mechanism
 
-Whalewall listens for Docker container `start` and `kill` events and creates or deletes
+Whalewall listens for Docker container `start` and `die` events and creates or deletes
 [nftables](https://wiki.nftables.org/wiki-nftables/index.php/What_is_nftables%3F)
 rules appropriately. Why is nftables used instead of iptables? A few reasons:
 
