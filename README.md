@@ -278,7 +278,7 @@ Verifying Docker images or binaries both require [cosign](https://github.com/sig
 Simply check the signature of the image with `cosign`:
 
 ```sh
-COSIGN_EXPERIMENTAL=true cosign verify ghcr.io/capnspacehook/whalewall:0.2.0 | jq
+COSIGN_EXPERIMENTAL=true cosign verify ghcr.io/capnspacehook/whalewall:<version> | jq
 ```
 
 You can verify the image was built by Github Actions by inspecting the `Issuer` and `Subject` fields of the output.
@@ -290,7 +290,7 @@ Download the checksums file, certificate, signature and the archive to the same 
 Extract the binary from the archive, verify the checksums file and verify the contents of the binary:
 
 ```sh
-tar xfs whalewall_0.2.0_linux_amd64.tar.gz
-cosign verify-blob --certificate checksums.txt.crt --signature checksums.txt.sig checksums.txt
+tar xfs whalewall_<version>_linux_amd64.tar.gz
+COSIGN_EXPERIMENTAL=true cosign verify-blob --certificate checksums.txt.crt --signature checksums.txt.sig checksums.txt
 sha256sum -c checksums.txt
 ```
