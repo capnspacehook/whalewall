@@ -148,7 +148,7 @@ func (r *RuleManager) Start(ctx context.Context) error {
 						}
 						r.createCh <- container
 					}
-					if msg.Action == "kill" {
+					if msg.Action == "die" {
 						r.deleteCh <- msg.ID
 					}
 				}
@@ -295,7 +295,7 @@ func addFilters(ctx context.Context, client dockerClient) (<-chan events.Message
 		},
 		filters.KeyValuePair{
 			Key:   "event",
-			Value: "kill",
+			Value: "die",
 		},
 	)
 	return client.Events(ctx, types.EventsOptions{Filters: filter})
