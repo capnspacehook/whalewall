@@ -74,6 +74,6 @@ jobs:
           cache: true
 
       - name: Lint with golangci-lint
-        uses: golangci/golangci-lint-action@v3.3.1
+        uses: golangci/golangci-lint-action@v3.4.0
         with:
           only-new-issues: true
