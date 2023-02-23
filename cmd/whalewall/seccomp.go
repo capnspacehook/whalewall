@@ -29,6 +29,10 @@ var allowedSyscalls = seccomp.SyscallRules{
 			seccomp.EqualTo(unix.CLOCK_MONOTONIC),
 			seccomp.MatchAny{},
 		},
+		{
+			seccomp.EqualTo(unix.CLOCK_REALTIME),
+			seccomp.MatchAny{},
+		},
 	},
 	unix.SYS_CLONE: {
 		// parent_tidptr and child_tidptr are always 0 because neither
