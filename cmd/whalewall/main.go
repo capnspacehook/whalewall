@@ -122,9 +122,10 @@ func mainRetCode() int {
 	return 0
 }
 
+// TODO: test with docker with TLS
 func restrictPrivileges(logger *zap.Logger, sqliteFile, logPath string) bool {
 	// only allow needed files to be read/written to
-	// TODO: test with docker with TLS
+	// sqlite database needs read/write access
 	allowedPaths := []landlock.PathOpt{
 		landlock.RODirs(filepath.Dir(sqliteFile)),
 		landlock.RWFiles(
@@ -133,11 +134,14 @@ func restrictPrivileges(logger *zap.Logger, sqliteFile, logPath string) bool {
 			sqliteFile+"-shm",
 		),
 	}
+	// if we are logging to a file we need to write to it
 	if logPath != "stdout" && logPath != "stderr" {
 		allowedPaths = append(allowedPaths,
 			landlock.PathAccess(llsyscall.AccessFSWriteFile, logPath),
 		)
 	}
+	// Go's networking stack/runtime will read the following files if
+	// they are available, which they may not be if we are in a container
 	roFiles := []string{
 		"/etc/protocols",
 		"/etc/services",
@@ -147,11 +151,9 @@ func restrictPrivileges(logger *zap.Logger, sqliteFile, logPath string) bool {
 		"/etc/hosts",
 	}
 	for _, file := range roFiles {
-		if _, err := os.Stat(file); err == nil {
-			allowedPaths = append(allowedPaths,
-				landlock.PathAccess(llsyscall.AccessFSReadFile, file),
-			)
-		}
+		allowedPaths = append(allowedPaths,
+			landlock.PathAccess(llsyscall.AccessFSReadFile, file).IgnoreIfMissing(),
+		)
 	}
 
 	err := landlock.V1.RestrictPaths(
