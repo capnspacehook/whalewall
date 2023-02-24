@@ -5,7 +5,7 @@ go 1.19
 require (
 	github.com/docker/docker v20.10.22+incompatible
 	github.com/docker/go-connections v0.4.0
-	github.com/google/nftables v0.0.0-20221015190445-4f5cd5826fbd
+	github.com/google/nftables v0.1.0
 	github.com/landlock-lsm/go-landlock v0.0.0-20230212201647-821adaecc1a5
 	go.uber.org/zap v1.24.0
 	go4.org/netipx v0.0.0-20220812043211-3cc044ffd68d
