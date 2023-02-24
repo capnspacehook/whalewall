@@ -19,7 +19,7 @@ require (
 // Test dependencies
 require (
 	github.com/google/go-cmp v0.5.9
-	github.com/matryer/is v1.4.0
+	github.com/matryer/is v1.4.1
 )
 
 require (
