@@ -9,6 +9,20 @@ import (
 	"context"
 )
 
+const activateWaitingContainerRules = `-- name: ActivateWaitingContainerRules :exec
+UPDATE
+	waiting_container_rules
+SET
+	active = TRUE
+WHERE
+	dst_container_name = ?
+`
+
+func (q *Queries) ActivateWaitingContainerRules(ctx context.Context, dstContainerName string) error {
+	_, err := q.exec(ctx, q.activateWaitingContainerRulesStmt, activateWaitingContainerRules, dstContainerName)
+	return err
+}
+
 const addContainer = `-- name: AddContainer :exec
 INSERT INTO
 	containers(id, name)
@@ -89,6 +103,35 @@ func (q *Queries) AddEstContainer(ctx context.Context, arg AddEstContainerParams
 	return err
 }
 
+const addWaitingContainerRule = `-- name: AddWaitingContainerRule :exec
+INSERT INTO
+	waiting_container_rules
+	(
+		src_container_id,
+		dst_container_name,
+		rule,
+		active
+	)
+VALUES
+	(
+		?,
+		?,
+		?,
+		TRUE
+	)
+`
+
+type AddWaitingContainerRuleParams struct {
+	SrcContainerID   string
+	DstContainerName string
+	Rule             []byte
+}
+
+func (q *Queries) AddWaitingContainerRule(ctx context.Context, arg AddWaitingContainerRuleParams) error {
+	_, err := q.exec(ctx, q.addWaitingContainerRuleStmt, addWaitingContainerRule, arg.SrcContainerID, arg.DstContainerName, arg.Rule)
+	return err
+}
+
 const containerExists = `-- name: ContainerExists :one
 SELECT
 	EXISTS (
@@ -106,6 +149,20 @@ func (q *Queries) ContainerExists(ctx context.Context, id string) (interface{}, 
 	var column_1 interface{}
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const deactivateWaitingContainerRules = `-- name: DeactivateWaitingContainerRules :exec
+UPDATE
+	waiting_container_rules
+SET
+	active = FALSE
+WHERE
+	dst_container_name = ?
+`
+
+func (q *Queries) DeactivateWaitingContainerRules(ctx context.Context, dstContainerName string) error {
+	_, err := q.exec(ctx, q.deactivateWaitingContainerRulesStmt, deactivateWaitingContainerRules, dstContainerName)
+	return err
 }
 
 const deleteContainer = `-- name: DeleteContainer :exec
@@ -153,6 +210,18 @@ WHERE
 
 func (q *Queries) DeleteEstContainers(ctx context.Context, srcContainerID string) error {
 	_, err := q.exec(ctx, q.deleteEstContainersStmt, deleteEstContainers, srcContainerID)
+	return err
+}
+
+const deleteWaitingContainerRules = `-- name: DeleteWaitingContainerRules :exec
+DELETE FROM
+	waiting_container_rules
+WHERE
+	src_container_id = ?
+`
+
+func (q *Queries) DeleteWaitingContainerRules(ctx context.Context, srcContainerID string) error {
+	_, err := q.exec(ctx, q.deleteWaitingContainerRulesStmt, deleteWaitingContainerRules, srcContainerID)
 	return err
 }
 
@@ -301,6 +370,51 @@ func (q *Queries) GetEstContainers(ctx context.Context, srcContainerID string) (
 	for rows.Next() {
 		var i GetEstContainersRow
 		if err := rows.Scan(&i.DstContainerID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getWaitingContainerRules = `-- name: GetWaitingContainerRules :many
+SELECT
+	w.src_container_id,
+	c.name,
+	w.rule
+FROM
+	waiting_container_rules w
+JOIN
+	containers c
+ON
+	c.id = w.src_container_id
+WHERE
+	w.dst_container_name = ? AND
+	w.active = TRUE
+`
+
+type GetWaitingContainerRulesRow struct {
+	SrcContainerID string
+	Name           string
+	Rule           []byte
+}
+
+func (q *Queries) GetWaitingContainerRules(ctx context.Context, dstContainerName string) ([]GetWaitingContainerRulesRow, error) {
+	rows, err := q.query(ctx, q.getWaitingContainerRulesStmt, getWaitingContainerRules, dstContainerName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetWaitingContainerRulesRow
+	for rows.Next() {
+		var i GetWaitingContainerRulesRow
+		if err := rows.Scan(&i.SrcContainerID, &i.Name, &i.Rule); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

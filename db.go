@@ -11,6 +11,19 @@ import (
 
 //go:generate sqlc generate
 
+func (r *RuleManager) containerExists(ctx context.Context, id string) (bool, error) {
+	e, err := r.db.ContainerExists(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	exists, ok := e.(int64)
+	if !ok {
+		return false, fmt.Errorf("got unexpected type from SQL query: %T", e)
+	}
+
+	return exists == 1, nil
+}
+
 func (r *RuleManager) addContainer(ctx context.Context, logger *zap.Logger, id, name, service string, addrs map[string][]byte, estContainers map[string]struct{}) error {
 	tx, err := r.db.Begin(ctx, logger)
 	if err != nil {
@@ -38,11 +51,7 @@ func (r *RuleManager) addContainer(ctx context.Context, logger *zap.Logger, id, 
 
 	// add names the container may have been referred to in user rules
 	// so when creating rules that specify this container it can be found
-	aliases := []string{"/" + name}
-	if service != "" && service != name {
-		aliases = append(aliases, service)
-		aliases = append(aliases, "/"+service)
-	}
+	aliases := containerAliases(name, service)
 	for _, alias := range aliases {
 		err := tx.AddContainerAlias(ctx, database.AddContainerAliasParams{
 			ContainerID:    id,
@@ -68,7 +77,16 @@ func (r *RuleManager) addContainer(ctx context.Context, logger *zap.Logger, id, 
 	return tx.Commit(ctx)
 }
 
-func (r *RuleManager) deleteContainer(ctx context.Context, logger *zap.Logger, id string) error {
+func containerAliases(name, service string) []string {
+	aliases := []string{"/" + name}
+	if service != "" && service != name {
+		aliases = append(aliases, service)
+		aliases = append(aliases, "/"+service)
+	}
+	return aliases
+}
+
+func (r *RuleManager) deleteContainer(ctx context.Context, logger *zap.Logger, id, name string) error {
 	tx, err := r.db.Begin(ctx, logger)
 	if err != nil {
 		return err
@@ -83,6 +101,15 @@ func (r *RuleManager) deleteContainer(ctx context.Context, logger *zap.Logger, i
 	}
 	if err := tx.DeleteEstContainers(ctx, id); err != nil {
 		return fmt.Errorf("error deleting established container in database: %w", err)
+	}
+	// delete waiting container rules that this container created
+	if err := tx.DeleteWaitingContainerRules(ctx, id); err != nil {
+		return fmt.Errorf("error deleting waiting container rules in database: %w", err)
+	}
+	// activate waiting container rules concerning this container so
+	// that if it restarts those rules can be recreated
+	if err := tx.ActivateWaitingContainerRules(ctx, name); err != nil {
+		return fmt.Errorf("error updating waiting container rules in database: %w", err)
 	}
 	if err := tx.DeleteContainer(ctx, id); err != nil {
 		return fmt.Errorf("error deleting container in database: %w", err)

@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/nftables"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 )
 
@@ -55,6 +56,14 @@ func newMockFirewall(logger *zap.Logger) *mockFirewall {
 		logger: logger.Sugar(),
 		tables: make(map[string]table),
 		chains: make(map[string]chain),
+	}
+}
+
+func (m *mockFirewall) clone() *mockFirewall {
+	return &mockFirewall{
+		logger: m.logger,
+		tables: maps.Clone(m.tables),
+		chains: maps.Clone(m.chains),
 	}
 }
 
@@ -182,7 +191,7 @@ func (m *mockFirewall) SetDeleteElements(s *nftables.Set, vals []nftables.SetEle
 			m.logger.Errorf("set element with key %v not found", v.Key)
 			m.flushErr = syscall.ENOENT
 		}
-		elements = slices.Delete(elements, i, i)
+		elements = slices.Delete(elements, i, i+1)
 	}
 	t.sets[s.Name] = elements
 	m.tables[s.Table.Name] = t
@@ -221,7 +230,7 @@ func (m *mockFirewall) DelRule(r *nftables.Rule) error {
 		return nil
 	}
 
-	c.rules = slices.Delete(c.rules, i, i)
+	c.rules = slices.Delete(c.rules, i, i+1)
 	m.chains[r.Chain.Name] = c
 
 	return nil

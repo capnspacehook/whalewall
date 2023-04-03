@@ -25,3 +25,10 @@ type EstContainer struct {
 	SrcContainerID string
 	DstContainerID string
 }
+
+type WaitingContainerRule struct {
+	SrcContainerID   string
+	DstContainerName string
+	Rule             []byte
+	Active           bool
+}

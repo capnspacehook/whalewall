@@ -24,6 +24,9 @@ func New(db DBTX) *Queries {
 func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	q := Queries{db: db}
 	var err error
+	if q.activateWaitingContainerRulesStmt, err = db.PrepareContext(ctx, activateWaitingContainerRules); err != nil {
+		return nil, fmt.Errorf("error preparing query ActivateWaitingContainerRules: %w", err)
+	}
 	if q.addContainerStmt, err = db.PrepareContext(ctx, addContainer); err != nil {
 		return nil, fmt.Errorf("error preparing query AddContainer: %w", err)
 	}
@@ -36,8 +39,14 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.addEstContainerStmt, err = db.PrepareContext(ctx, addEstContainer); err != nil {
 		return nil, fmt.Errorf("error preparing query AddEstContainer: %w", err)
 	}
+	if q.addWaitingContainerRuleStmt, err = db.PrepareContext(ctx, addWaitingContainerRule); err != nil {
+		return nil, fmt.Errorf("error preparing query AddWaitingContainerRule: %w", err)
+	}
 	if q.containerExistsStmt, err = db.PrepareContext(ctx, containerExists); err != nil {
 		return nil, fmt.Errorf("error preparing query ContainerExists: %w", err)
+	}
+	if q.deactivateWaitingContainerRulesStmt, err = db.PrepareContext(ctx, deactivateWaitingContainerRules); err != nil {
+		return nil, fmt.Errorf("error preparing query DeactivateWaitingContainerRules: %w", err)
 	}
 	if q.deleteContainerStmt, err = db.PrepareContext(ctx, deleteContainer); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteContainer: %w", err)
@@ -50,6 +59,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.deleteEstContainersStmt, err = db.PrepareContext(ctx, deleteEstContainers); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteEstContainers: %w", err)
+	}
+	if q.deleteWaitingContainerRulesStmt, err = db.PrepareContext(ctx, deleteWaitingContainerRules); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteWaitingContainerRules: %w", err)
 	}
 	if q.getContainerAddrsStmt, err = db.PrepareContext(ctx, getContainerAddrs); err != nil {
 		return nil, fmt.Errorf("error preparing query GetContainerAddrs: %w", err)
@@ -69,11 +81,19 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getEstContainersStmt, err = db.PrepareContext(ctx, getEstContainers); err != nil {
 		return nil, fmt.Errorf("error preparing query GetEstContainers: %w", err)
 	}
+	if q.getWaitingContainerRulesStmt, err = db.PrepareContext(ctx, getWaitingContainerRules); err != nil {
+		return nil, fmt.Errorf("error preparing query GetWaitingContainerRules: %w", err)
+	}
 	return &q, nil
 }
 
 func (q *Queries) Close() error {
 	var err error
+	if q.activateWaitingContainerRulesStmt != nil {
+		if cerr := q.activateWaitingContainerRulesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing activateWaitingContainerRulesStmt: %w", cerr)
+		}
+	}
 	if q.addContainerStmt != nil {
 		if cerr := q.addContainerStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing addContainerStmt: %w", cerr)
@@ -94,9 +114,19 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing addEstContainerStmt: %w", cerr)
 		}
 	}
+	if q.addWaitingContainerRuleStmt != nil {
+		if cerr := q.addWaitingContainerRuleStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing addWaitingContainerRuleStmt: %w", cerr)
+		}
+	}
 	if q.containerExistsStmt != nil {
 		if cerr := q.containerExistsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing containerExistsStmt: %w", cerr)
+		}
+	}
+	if q.deactivateWaitingContainerRulesStmt != nil {
+		if cerr := q.deactivateWaitingContainerRulesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deactivateWaitingContainerRulesStmt: %w", cerr)
 		}
 	}
 	if q.deleteContainerStmt != nil {
@@ -117,6 +147,11 @@ func (q *Queries) Close() error {
 	if q.deleteEstContainersStmt != nil {
 		if cerr := q.deleteEstContainersStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing deleteEstContainersStmt: %w", cerr)
+		}
+	}
+	if q.deleteWaitingContainerRulesStmt != nil {
+		if cerr := q.deleteWaitingContainerRulesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteWaitingContainerRulesStmt: %w", cerr)
 		}
 	}
 	if q.getContainerAddrsStmt != nil {
@@ -147,6 +182,11 @@ func (q *Queries) Close() error {
 	if q.getEstContainersStmt != nil {
 		if cerr := q.getEstContainersStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getEstContainersStmt: %w", cerr)
+		}
+	}
+	if q.getWaitingContainerRulesStmt != nil {
+		if cerr := q.getWaitingContainerRulesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getWaitingContainerRulesStmt: %w", cerr)
 		}
 	}
 	return err
@@ -186,43 +226,53 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 }
 
 type Queries struct {
-	db                                 DBTX
-	tx                                 *sql.Tx
-	addContainerStmt                   *sql.Stmt
-	addContainerAddrStmt               *sql.Stmt
-	addContainerAliasStmt              *sql.Stmt
-	addEstContainerStmt                *sql.Stmt
-	containerExistsStmt                *sql.Stmt
-	deleteContainerStmt                *sql.Stmt
-	deleteContainerAddrsStmt           *sql.Stmt
-	deleteContainerAliasesStmt         *sql.Stmt
-	deleteEstContainersStmt            *sql.Stmt
-	getContainerAddrsStmt              *sql.Stmt
-	getContainerIDStmt                 *sql.Stmt
-	getContainerIDAndNameFromAliasStmt *sql.Stmt
-	getContainerNameStmt               *sql.Stmt
-	getContainersStmt                  *sql.Stmt
-	getEstContainersStmt               *sql.Stmt
+	db                                  DBTX
+	tx                                  *sql.Tx
+	activateWaitingContainerRulesStmt   *sql.Stmt
+	addContainerStmt                    *sql.Stmt
+	addContainerAddrStmt                *sql.Stmt
+	addContainerAliasStmt               *sql.Stmt
+	addEstContainerStmt                 *sql.Stmt
+	addWaitingContainerRuleStmt         *sql.Stmt
+	containerExistsStmt                 *sql.Stmt
+	deactivateWaitingContainerRulesStmt *sql.Stmt
+	deleteContainerStmt                 *sql.Stmt
+	deleteContainerAddrsStmt            *sql.Stmt
+	deleteContainerAliasesStmt          *sql.Stmt
+	deleteEstContainersStmt             *sql.Stmt
+	deleteWaitingContainerRulesStmt     *sql.Stmt
+	getContainerAddrsStmt               *sql.Stmt
+	getContainerIDStmt                  *sql.Stmt
+	getContainerIDAndNameFromAliasStmt  *sql.Stmt
+	getContainerNameStmt                *sql.Stmt
+	getContainersStmt                   *sql.Stmt
+	getEstContainersStmt                *sql.Stmt
+	getWaitingContainerRulesStmt        *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
-		db:                                 tx,
-		tx:                                 tx,
-		addContainerStmt:                   q.addContainerStmt,
-		addContainerAddrStmt:               q.addContainerAddrStmt,
-		addContainerAliasStmt:              q.addContainerAliasStmt,
-		addEstContainerStmt:                q.addEstContainerStmt,
-		containerExistsStmt:                q.containerExistsStmt,
-		deleteContainerStmt:                q.deleteContainerStmt,
-		deleteContainerAddrsStmt:           q.deleteContainerAddrsStmt,
-		deleteContainerAliasesStmt:         q.deleteContainerAliasesStmt,
-		deleteEstContainersStmt:            q.deleteEstContainersStmt,
-		getContainerAddrsStmt:              q.getContainerAddrsStmt,
-		getContainerIDStmt:                 q.getContainerIDStmt,
-		getContainerIDAndNameFromAliasStmt: q.getContainerIDAndNameFromAliasStmt,
-		getContainerNameStmt:               q.getContainerNameStmt,
-		getContainersStmt:                  q.getContainersStmt,
-		getEstContainersStmt:               q.getEstContainersStmt,
+		db:                                  tx,
+		tx:                                  tx,
+		activateWaitingContainerRulesStmt:   q.activateWaitingContainerRulesStmt,
+		addContainerStmt:                    q.addContainerStmt,
+		addContainerAddrStmt:                q.addContainerAddrStmt,
+		addContainerAliasStmt:               q.addContainerAliasStmt,
+		addEstContainerStmt:                 q.addEstContainerStmt,
+		addWaitingContainerRuleStmt:         q.addWaitingContainerRuleStmt,
+		containerExistsStmt:                 q.containerExistsStmt,
+		deactivateWaitingContainerRulesStmt: q.deactivateWaitingContainerRulesStmt,
+		deleteContainerStmt:                 q.deleteContainerStmt,
+		deleteContainerAddrsStmt:            q.deleteContainerAddrsStmt,
+		deleteContainerAliasesStmt:          q.deleteContainerAliasesStmt,
+		deleteEstContainersStmt:             q.deleteEstContainersStmt,
+		deleteWaitingContainerRulesStmt:     q.deleteWaitingContainerRulesStmt,
+		getContainerAddrsStmt:               q.getContainerAddrsStmt,
+		getContainerIDStmt:                  q.getContainerIDStmt,
+		getContainerIDAndNameFromAliasStmt:  q.getContainerIDAndNameFromAliasStmt,
+		getContainerNameStmt:                q.getContainerNameStmt,
+		getContainersStmt:                   q.getContainersStmt,
+		getEstContainersStmt:                q.getEstContainersStmt,
+		getWaitingContainerRulesStmt:        q.getWaitingContainerRulesStmt,
 	}
 }

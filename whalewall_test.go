@@ -1,6 +1,7 @@
 package whalewall
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -22,6 +23,8 @@ import (
 	"github.com/matryer/is"
 	"go.uber.org/zap"
 	"go4.org/netipx"
+	"golang.org/x/exp/maps"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sys/unix"
 )
 
@@ -51,8 +54,8 @@ func TestIntegration(t *testing.T) {
 	is.True(runCmd(t, "client", "curl --connect-timeout 1 http://1.1.1.1") == 0)         // tcp port 80 to 1.1.1.1 is allowed
 	is.True(runCmd(t, "client", "curl --connect-timeout 1 http://1.0.0.1") != 0)         // tcp port 80 to 1.0.0.1 is not allowed
 	is.True(runCmd(t, "client", "curl --connect-timeout 1 https://www.google.com") == 0) // DNS and HTTPS is allowed externally
-	is.True(portOpen(t, "client", "server", 9001, false))                                // tcp port 9001 is allowed client -> server
-	is.True(!portOpen(t, "client", "server", 9001, true))                                // udp port 9001 is not allowed client -> server
+	is.True(portOpen(t, "client", "server", 756, false))                                 // tcp port 756 is allowed client -> server
+	is.True(!portOpen(t, "client", "server", 756, true))                                 // udp port 756 is not allowed client -> server
 	is.True(!portOpen(t, "client", "server", 80, false))                                 // tcp port 80 is not allowed client -> server
 	is.True(!portOpen(t, "client", "server", 80, true))                                  // udp port 80 is not allowed client -> server
 	is.True(portOpen(t, "tester", "localhost", 8080, false))                             // tcp mapped port 8080:80 of client is allowed from localhost
@@ -192,24 +195,27 @@ func run(t *testing.T, args ...string) int {
 	return 0
 }
 
-func TestRuleCreation(t *testing.T) {
-	cont1ID := "container_one_ID"
-	cont2ID := "container_two_ID"
-	cont1Name := "container1"
-	cont2Name := "container2"
-	gatewayAddr := netip.MustParseAddr("172.0.1.1")
-	cont1Addr := netip.MustParseAddr("172.0.1.2")
-	cont2Addr := netip.MustParseAddr("172.0.1.3")
-	dstAddr := netip.MustParseAddr("1.1.1.1")
-	dstRange := netipx.RangeOfPrefix(netip.MustParsePrefix("192.168.1.0/24"))
-	lowDstAddr := dstRange.From()
-	highDstAddr := dstRange.To()
+var (
+	cont1ID     = "container_one_ID"
+	cont2ID     = "container_two_ID"
+	cont1Name   = "container1"
+	cont2Name   = "container2"
+	gatewayAddr = netip.MustParseAddr("172.0.1.1")
+	cont1Addr   = netip.MustParseAddr("172.0.1.2")
+	cont2Addr   = netip.MustParseAddr("172.0.1.3")
+	dstAddr     = netip.MustParseAddr("1.1.1.1")
+	dstRange    = netipx.RangeOfPrefix(netip.MustParsePrefix("192.168.1.0/24"))
+	lowDstAddr  = dstRange.From()
+	highDstAddr = dstRange.To()
+)
 
-	tests := []struct {
+func TestRuleCreation(t *testing.T) {
+	type ruleCreationTest struct {
 		name          string
 		containers    []types.ContainerJSON
 		expectedRules map[*nftables.Chain][]*nftables.Rule
-	}{
+	}
+	tests := []ruleCreationTest{
 		{
 			name: "deny all",
 			containers: []types.ContainerJSON{
@@ -798,25 +804,6 @@ output:
 			containers: []types.ContainerJSON{
 				{
 					ContainerJSONBase: &types.ContainerJSONBase{
-						ID:   cont2ID,
-						Name: "/" + cont2Name,
-					},
-					Config: &container.Config{
-						Labels: map[string]string{
-							enabledLabel: "true",
-						},
-					},
-					NetworkSettings: &types.NetworkSettings{
-						Networks: map[string]*network.EndpointSettings{
-							"cont_net": {
-								Gateway:   gatewayAddr.String(),
-								IPAddress: cont2Addr.String(),
-							},
-						},
-					},
-				},
-				{
-					ContainerJSONBase: &types.ContainerJSONBase{
 						ID:   cont1ID,
 						Name: "/" + cont1Name,
 					},
@@ -840,34 +827,27 @@ output:
 						},
 					},
 				},
+				{
+					ContainerJSONBase: &types.ContainerJSONBase{
+						ID:   cont2ID,
+						Name: "/" + cont2Name,
+					},
+					Config: &container.Config{
+						Labels: map[string]string{
+							enabledLabel: "true",
+						},
+					},
+					NetworkSettings: &types.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"cont_net": {
+								Gateway:   gatewayAddr.String(),
+								IPAddress: cont2Addr.String(),
+							},
+						},
+					},
+				},
 			},
 			expectedRules: map[*nftables.Chain][]*nftables.Rule{
-				{
-					Name:  buildChainName(cont2Name, cont2ID),
-					Table: filterTable,
-				}: {
-					{
-						Exprs: slicesJoin(
-							matchIPExprs(ref(cont2Addr.As4())[:], srcAddrOffset),
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
-							matchProtoExprs(unix.IPPROTO_UDP),
-							matchPortExprs(9001, srcPortOffset),
-							matchConnStateExprs(stateEst),
-							[]expr.Any{
-								&expr.Counter{},
-								acceptVerdict,
-							},
-						),
-						UserData: []byte(cont2ID),
-					},
-					createDropRule(
-						&nftables.Chain{
-							Name:  buildChainName(cont2Name, cont2ID),
-							Table: filterTable,
-						},
-						cont2ID,
-					),
-				},
 				{
 					Name:  buildChainName(cont1Name, cont1ID),
 					Table: filterTable,
@@ -892,6 +872,169 @@ output:
 							Table: filterTable,
 						},
 						cont1ID,
+					),
+				},
+				{
+					Name:  buildChainName(cont2Name, cont2ID),
+					Table: filterTable,
+				}: {
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont2Addr.As4())[:], srcAddrOffset),
+							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchProtoExprs(unix.IPPROTO_UDP),
+							matchPortExprs(9001, srcPortOffset),
+							matchConnStateExprs(stateEst),
+							[]expr.Any{
+								&expr.Counter{},
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					createDropRule(
+						&nftables.Chain{
+							Name:  buildChainName(cont2Name, cont2ID),
+							Table: filterTable,
+						},
+						cont2ID,
+					),
+				},
+			},
+		},
+		{
+			name: "allow containers to access each other",
+			containers: []types.ContainerJSON{
+				{
+					ContainerJSONBase: &types.ContainerJSONBase{
+						ID:   cont1ID,
+						Name: "/" + cont1Name,
+					},
+					Config: &container.Config{
+						Labels: map[string]string{
+							enabledLabel: "true",
+							rulesLabel: `
+output:
+  - container: container2
+    network: cont_net
+    proto: tcp
+    port: 202`,
+						},
+					},
+					NetworkSettings: &types.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"cont_net": {
+								Gateway:   gatewayAddr.String(),
+								IPAddress: cont1Addr.String(),
+							},
+						},
+					},
+				},
+				{
+					ContainerJSONBase: &types.ContainerJSONBase{
+						ID:   cont2ID,
+						Name: "/" + cont2Name,
+					},
+					Config: &container.Config{
+						Labels: map[string]string{
+							enabledLabel: "true",
+							rulesLabel: `
+output:
+  - container: container1
+    network: cont_net
+    proto: tcp
+    port: 101`,
+						},
+					},
+					NetworkSettings: &types.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"cont_net": {
+								Gateway:   gatewayAddr.String(),
+								IPAddress: cont2Addr.String(),
+							},
+						},
+					},
+				},
+			},
+			expectedRules: map[*nftables.Chain][]*nftables.Rule{
+				{
+					Name:  buildChainName(cont1Name, cont1ID),
+					Table: filterTable,
+				}: {
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchIPExprs(ref(cont2Addr.As4())[:], dstAddrOffset),
+							matchProtoExprs(unix.IPPROTO_TCP),
+							matchPortExprs(101, srcPortOffset),
+							matchConnStateExprs(stateEst),
+							[]expr.Any{
+								&expr.Counter{},
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont2ID),
+					},
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchIPExprs(ref(cont2Addr.As4())[:], dstAddrOffset),
+							matchProtoExprs(unix.IPPROTO_TCP),
+							matchPortExprs(202, dstPortOffset),
+							matchConnStateExprs(stateNewEst),
+							[]expr.Any{
+								&expr.Counter{},
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont2ID),
+					},
+					createDropRule(
+						&nftables.Chain{
+							Name:  buildChainName(cont1Name, cont1ID),
+							Table: filterTable,
+						},
+						cont1ID,
+					),
+				},
+				{
+					Name:  buildChainName(cont2Name, cont2ID),
+					Table: filterTable,
+				}: {
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont2Addr.As4())[:], srcAddrOffset),
+							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchProtoExprs(unix.IPPROTO_TCP),
+							matchPortExprs(101, dstPortOffset),
+							matchConnStateExprs(stateNewEst),
+							[]expr.Any{
+								&expr.Counter{},
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont2Addr.As4())[:], srcAddrOffset),
+							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchProtoExprs(unix.IPPROTO_TCP),
+							matchPortExprs(202, srcPortOffset),
+							matchConnStateExprs(stateEst),
+							[]expr.Any{
+								&expr.Counter{},
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					createDropRule(
+						&nftables.Chain{
+							Name:  buildChainName(cont2Name, cont2ID),
+							Table: filterTable,
+						},
+						cont2ID,
 					),
 				},
 			},
@@ -1500,9 +1643,23 @@ mapped_ports:
 		return rulesEqual(logger, r1, r2)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	testCreatingRules := func(tt ruleCreationTest, allContainersStarted bool, clearRules bool) func(*testing.T) {
+		return func(t *testing.T) {
 			is := is.New(t)
+
+			dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+			r, err := NewRuleManager(context.Background(), logger, dbFile, defaultTimeout)
+			is.NoErr(err)
+
+			var dockerCli *mockDockerClient
+			if allContainersStarted {
+				dockerCli = newMockDockerClient(tt.containers)
+			} else {
+				dockerCli = newMockDockerClient(nil)
+			}
+			r.setDockerClientCreator(func() (dockerClient, error) {
+				return dockerCli, nil
+			})
 
 			// create mock nftables client and add required prerequisite
 			// DOCKER-USER chain
@@ -1514,14 +1671,6 @@ mapped_ports:
 				Type:  nftables.ChainTypeFilter,
 			})
 			is.NoErr(mfc.Flush())
-
-			dbFile := filepath.Join(t.TempDir(), "db.sqlite")
-			r, err := NewRuleManager(context.Background(), logger, dbFile, defaultTimeout)
-			is.NoErr(err)
-
-			r.setDockerClientCreator(func() (dockerClient, error) {
-				return newMockDockerClient(tt.containers), nil
-			})
 			r.setFirewallClientCreator(func() (firewallClient, error) {
 				return mfc, nil
 			})
@@ -1538,6 +1687,10 @@ mapped_ports:
 
 			// create rules
 			for _, c := range tt.containers {
+				if !allContainersStarted {
+					dockerCli.containers = append(dockerCli.containers, c)
+				}
+
 				err := r.createContainerRules(context.Background(), c)
 				is.NoErr(err)
 			}
@@ -1547,18 +1700,225 @@ mapped_ports:
 				rules, err := mfc.GetRules(chain.Table, chain)
 				is.NoErr(err)
 
-				is.Equal(len(expectedRules), len(rules))
-				for i := range expectedRules {
-					// set rule's table here so we don't have to in test
-					// cases above
-					expectedRules[i].Table = chain.Table
-
-					if !cmp.Equal(expectedRules[i], rules[i], cmp.Comparer(comparer)) {
-						t.Errorf("chain %s rule %d not equal:\n%s", chain.Name, i, cmp.Diff(expectedRules[i].Exprs, rules[i].Exprs))
-					}
-				}
+				compareRules(t, comparer, chain.Name, expectedRules, rules)
 			}
-		})
+
+			if clearRules {
+				// check that clearing rules removes all whalewall rules
+				// and sets
+				err := r.clearRules(context.Background())
+				is.NoErr(err)
+
+				is.True(len(mfc.tables[filterTableName].sets) == 0)
+				chains := maps.Values(mfc.chains)
+				slices.SortFunc(chains, func(a, b chain) bool {
+					return a.chain.Name < b.chain.Name
+				})
+				is.True(len(chains) == 3)
+				is.True(chains[0].chain.Name == dockerChainName)
+				is.True(chains[1].chain.Name == inputChainName)
+				is.True(chains[2].chain.Name == outputChainName)
+			} else {
+				// check that deleting container rules removes all rules
+				// of that container
+				for _, c := range tt.containers {
+					contName := stripName(c.Name)
+					err := r.deleteContainerRules(context.Background(), c.ID, contName)
+					is.NoErr(err)
+
+					checkMfc := mfc.clone()
+					chain := &nftables.Chain{
+						Name:  buildChainName(contName, c.ID),
+						Table: filterTable,
+					}
+					rules, err := checkMfc.GetRules(filterTable, chain)
+					is.NoErr(err)
+					is.True(len(rules) == 0)
+				}
+				is.True(len(mfc.tables[filterTableName].sets[containerAddrSetName]) == 0)
+			}
+		}
+	}
+
+	for _, tt := range tests {
+		if len(tt.containers) == 1 {
+			t.Run(tt.name+" | delete container rules", testCreatingRules(tt, true, false))
+			t.Run(tt.name+" | clear all rules", testCreatingRules(tt, true, true))
+		} else {
+			t.Run(tt.name+" | all started | delete container rules", testCreatingRules(tt, true, false))
+			t.Run(tt.name+" | all started | clear all rules", testCreatingRules(tt, true, true))
+			t.Run(tt.name+" | one container at a time | delete container rules", testCreatingRules(tt, false, false))
+			t.Run(tt.name+" | one container at a time | clear all rules", testCreatingRules(tt, false, true))
+		}
+	}
+}
+
+func TestDeletingContainers(t *testing.T) {
+	containers := []types.ContainerJSON{
+		{
+			ContainerJSONBase: &types.ContainerJSONBase{
+				ID:   cont1ID,
+				Name: "/" + cont1Name,
+			},
+			Config: &container.Config{
+				Labels: map[string]string{
+					enabledLabel: "true",
+					rulesLabel: `
+output:
+- container: container2
+  network: cont_net
+  proto: tcp
+  port: 201
+- container: container2
+  network: cont_net
+  proto: tcp
+  port: 202`,
+				},
+			},
+			NetworkSettings: &types.NetworkSettings{
+				Networks: map[string]*network.EndpointSettings{
+					"cont_net": {
+						Gateway:   gatewayAddr.String(),
+						IPAddress: cont1Addr.String(),
+					},
+				},
+			},
+		},
+		{
+			ContainerJSONBase: &types.ContainerJSONBase{
+				ID:   cont2ID,
+				Name: "/" + cont2Name,
+			},
+			Config: &container.Config{
+				Labels: map[string]string{
+					enabledLabel: "true",
+				},
+			},
+			NetworkSettings: &types.NetworkSettings{
+				Networks: map[string]*network.EndpointSettings{
+					"cont_net": {
+						Gateway:   gatewayAddr.String(),
+						IPAddress: cont2Addr.String(),
+					},
+				},
+			},
+		},
+	}
+
+	is := is.New(t)
+	logger, err := zap.NewDevelopment()
+	is.NoErr(err)
+
+	comparer := func(r1, r2 *nftables.Rule) bool {
+		return rulesEqual(logger, r1, r2)
+	}
+
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	r, err := NewRuleManager(context.Background(), logger, dbFile, defaultTimeout)
+	is.NoErr(err)
+
+	dockerCli := newMockDockerClient(nil)
+	r.setDockerClientCreator(func() (dockerClient, error) {
+		return dockerCli, nil
+	})
+
+	// create mock nftables client and add required prerequisite
+	// DOCKER-USER chain
+	mfc := newMockFirewall(logger)
+	mfc.AddTable(filterTable)
+	mfc.AddChain(&nftables.Chain{
+		Name:  dockerChainName,
+		Table: filterTable,
+		Type:  nftables.ChainTypeFilter,
+	})
+	is.NoErr(mfc.Flush())
+	r.setFirewallClientCreator(func() (firewallClient, error) {
+		return mfc, nil
+	})
+
+	// create new database and base rules
+	err = r.init(context.Background())
+	is.NoErr(err)
+	err = r.createBaseRules()
+	is.NoErr(err)
+	t.Cleanup(func() {
+		err := r.clearRules(context.Background())
+		is.NoErr(err)
+	})
+
+	// create rules
+	for _, c := range containers {
+		dockerCli.containers = append(dockerCli.containers, c)
+		err := r.createContainerRules(context.Background(), c)
+		is.NoErr(err)
+	}
+
+	cont1ChainName := buildChainName(cont1Name, cont1ID)
+	cont1Chain := &nftables.Chain{
+		Table: filterTable,
+		Name:  cont1ChainName,
+	}
+	cont1RulesBefore, err := mfc.GetRules(filterTable, cont1Chain)
+	is.NoErr(err)
+	is.True(len(cont1RulesBefore) == 3)
+
+	cont2ChainName := buildChainName(cont2Name, cont2ID)
+	cont2Chain := &nftables.Chain{
+		Table: filterTable,
+		Name:  cont2ChainName,
+	}
+	cont2RulesBefore, err := mfc.GetRules(filterTable, cont2Chain)
+	is.NoErr(err)
+	is.True(len(cont2RulesBefore) == 3)
+
+	// delete rules of container 2
+	err = r.deleteContainerRules(context.Background(), cont2ID, cont2Name)
+	is.NoErr(err)
+
+	// ensure rules related to container 2 were from removed from
+	// container 1's chain
+	rulesAfterDeletion, err := mfc.GetRules(filterTable, cont1Chain)
+	is.NoErr(err)
+	is.True(len(rulesAfterDeletion) == 1)
+
+	// recreate rules for container 2
+	err = r.createContainerRules(context.Background(), containers[1])
+	is.NoErr(err)
+
+	// ensure rules of both containers are the same as before
+	cont1RulesAfter, err := mfc.GetRules(filterTable, cont1Chain)
+	is.NoErr(err)
+	cont2RulesAfter, err := mfc.GetRules(filterTable, cont2Chain)
+	is.NoErr(err)
+
+	compareRules(t, comparer, cont1ChainName, cont1RulesBefore, cont1RulesAfter)
+	compareRules(t, comparer, cont2ChainName, cont2RulesBefore, cont2RulesAfter)
+}
+
+func compareRules(t *testing.T, comparer func(r1, r2 *nftables.Rule) bool, chainName string, expectedRules, rules []*nftables.Rule) {
+	if len(expectedRules) != len(rules) {
+		t.Errorf("chain %s different amount of rules: want %d got %d", chainName, len(expectedRules), len(rules))
+		return
+	}
+	for i := range expectedRules {
+		// set rule's table here so we don't have to in test
+		// cases above
+		expectedRules[i].Table = filterTable
+
+		if !cmp.Equal(expectedRules[i], rules[i], cmp.Comparer(comparer)) {
+			t.Errorf("chain %s rule %d not equal:\n%s",
+				chainName,
+				i,
+				cmp.Diff(expectedRules[i].Exprs, rules[i].Exprs),
+			)
+		}
+		if !bytes.Equal(expectedRules[i].UserData, rules[i].UserData) {
+			t.Errorf("chain %s rule %d user data not equal:\n%s",
+				chainName,
+				i,
+				cmp.Diff(string(expectedRules[i].UserData), string(rules[i].UserData)),
+			)
+		}
 	}
 }
 

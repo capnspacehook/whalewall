@@ -31,16 +31,12 @@ func (r *RuleManager) syncContainers(ctx context.Context) error {
 	})
 
 	for _, c := range containers {
-		e, err := r.db.ContainerExists(ctx, c.ID)
+		exists, err := r.containerExists(ctx, c.ID)
 		if err != nil {
-			r.logger.Error("error querying container from database", zap.String("container.id", c.ID), zap.Error(err))
+			r.logger.Error("error querying container from database", zap.String("container.id", c.ID[:12]), zap.Error(err))
 			continue
 		}
-		exists, ok := e.(int64)
-		if !ok {
-			return fmt.Errorf("got unexpected type from SQL query: %T", e)
-		}
-		if exists == 1 {
+		if exists {
 			// we are aware of container and have created rules for it
 			// TODO: should rules still try and be created, but container
 			// not added to DB just in case some were deleted?
@@ -51,21 +47,33 @@ func (r *RuleManager) syncContainers(ctx context.Context) error {
 			return r.dockerCli.ContainerInspect(ctx, c.ID)
 		})
 		if err != nil {
-			r.logger.Error("error inspecting container", zap.String("container.id", c.ID), zap.Error(err))
+			r.logger.Error("error inspecting container", zap.String("container.id", c.ID[:12]), zap.Error(err))
 			continue
 		}
 
-		if e, ok := container.Config.Labels[enabledLabel]; ok {
-			var enabled bool
-			if err := yaml.Unmarshal([]byte(e), &enabled); err != nil {
-				r.logger.Error("error parsing label", zap.String("label", enabledLabel), zap.Error(err))
-				continue
-			}
-			if enabled {
-				r.createCh <- container
-			}
+		enabled, err := whalewallEnabled(container.Config.Labels)
+		if err != nil {
+			r.logger.Error("error parsing label", zap.String("container.id", c.ID[:12]), zap.String("label", enabledLabel), zap.Error(err))
+			continue
+		}
+		if enabled {
+			r.createCh <- container
 		}
 	}
 
 	return nil
+}
+
+func whalewallEnabled(labels map[string]string) (bool, error) {
+	e, ok := labels[enabledLabel]
+	if !ok {
+		return false, nil
+	}
+
+	var enabled bool
+	if err := yaml.Unmarshal([]byte(e), &enabled); err != nil {
+		return false, err
+	}
+
+	return enabled, nil
 }

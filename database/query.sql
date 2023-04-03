@@ -1,3 +1,11 @@
+-- name: ActivateWaitingContainerRules :exec
+UPDATE
+	waiting_container_rules
+SET
+	active = TRUE
+WHERE
+	dst_container_name = ?;
+
 -- name: AddContainer :exec
 INSERT INTO
 	containers(id, name)
@@ -34,6 +42,23 @@ VALUES
 		?
 	);
 
+-- name: AddWaitingContainerRule :exec
+INSERT INTO
+	waiting_container_rules
+	(
+		src_container_id,
+		dst_container_name,
+		rule,
+		active
+	)
+VALUES
+	(
+		?,
+		?,
+		?,
+		TRUE
+	);
+
 -- name: ContainerExists :one
 SELECT
 	EXISTS (
@@ -66,6 +91,20 @@ WHERE
 -- name: DeleteEstContainers :exec
 DELETE FROM
 	est_containers
+WHERE
+	src_container_id = ?;
+
+-- name: DeactivateWaitingContainerRules :exec
+UPDATE
+	waiting_container_rules
+SET
+	active = FALSE
+WHERE
+	dst_container_name = ?;
+
+-- name: DeleteWaitingContainerRules :exec
+DELETE FROM
+	waiting_container_rules
 WHERE
 	src_container_id = ?;
 
@@ -125,3 +164,18 @@ ON
 	c.id = e.dst_container_id
 WHERE
 	e.src_container_id = ?;
+
+-- name: GetWaitingContainerRules :many
+SELECT
+	w.src_container_id,
+	c.name,
+	w.rule
+FROM
+	waiting_container_rules w
+JOIN
+	containers c
+ON
+	c.id = w.src_container_id
+WHERE
+	w.dst_container_name = ? AND
+	w.active = TRUE;
