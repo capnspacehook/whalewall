@@ -152,7 +152,6 @@ func (r *RuleManager) deleteRules(ctx context.Context) {
 		}
 
 		r.logger.Info("deleting rules", zap.String("container.id", truncID), zap.String("container.name", name))
-		r.deleteContainerRules(ctx, id, name)
 		if err := r.deleteContainerRules(ctx, id, name); err != nil {
 			r.logger.Error("error deleting rules",
 				zap.String("container.id", truncID),
