@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"syscall"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
 	"github.com/google/nftables"
 	"go.uber.org/zap"
@@ -99,9 +98,7 @@ func (r *RuleManager) cleanupRules(ctx context.Context) error {
 	}
 
 	for _, container := range containers {
-		c, err := withTimeout(ctx, r.timeout, func(ctx context.Context) (types.ContainerJSON, error) {
-			return r.dockerCli.ContainerInspect(ctx, container.ID)
-		})
+		c, err := r.dockerCli.ContainerInspect(ctx, container.ID)
 		truncID := container.ID[:12]
 		if err != nil {
 			if client.IsErrNotFound(err) {

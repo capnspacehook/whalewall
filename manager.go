@@ -45,8 +45,7 @@ type RuleManager struct {
 	stopping chan struct{}
 	done     chan struct{}
 
-	logger  *zap.Logger
-	timeout time.Duration
+	logger *zap.Logger
 
 	newDockerClient   dockerClientCreator
 	newFirewallClient firewallClientCreator
@@ -67,9 +66,15 @@ func NewRuleManager(ctx context.Context, logger *zap.Logger, dbFile string, time
 		stopping: make(chan struct{}),
 		done:     make(chan struct{}),
 		logger:   logger,
-		timeout:  timeout,
 		newDockerClient: func() (dockerClient, error) {
-			return client.NewClientWithOpts(client.FromEnv)
+			dc, err := client.NewClientWithOpts(client.FromEnv)
+			if err != nil {
+				return nil, err
+			}
+			return &wrappedDockerClient{
+				timeout:      timeout,
+				dockerClient: dc,
+			}, nil
 		},
 		newFirewallClient: func() (firewallClient, error) {
 			return nftables.New()
@@ -139,9 +144,7 @@ func (r *RuleManager) Start(ctx context.Context) error {
 					}
 
 					if msg.Action == "start" {
-						container, err := withTimeout(ctx, r.timeout, func(ctx context.Context) (types.ContainerJSON, error) {
-							return r.dockerCli.ContainerInspect(ctx, msg.ID)
-						})
+						container, err := r.dockerCli.ContainerInspect(ctx, msg.ID)
 						if err != nil {
 							r.logger.Error("error inspecting container", zap.String("container.id", msg.ID), zap.Error(err))
 							continue
@@ -163,9 +166,7 @@ func (r *RuleManager) Start(ctx context.Context) error {
 					r.logger.Error("error reading docker event stream", zap.Error(err))
 				}
 				r.logger.Info("attempting to reconnect to docker daemon")
-				_, err = withTimeout(ctx, r.timeout, func(ctx context.Context) (types.Ping, error) {
-					return r.dockerCli.Ping(ctx)
-				})
+				_, err = r.dockerCli.Ping(ctx)
 				if err != nil {
 					r.logger.Error("error connecting to docker daemon", zap.Error(err))
 					r.done <- struct{}{}
@@ -190,9 +191,7 @@ func (r *RuleManager) init(ctx context.Context) error {
 		return fmt.Errorf("error creating docker client: %w", err)
 	}
 	r.dockerCli = dockerCli
-	_, err = withTimeout(ctx, r.timeout, func(ctx context.Context) (types.Ping, error) {
-		return r.dockerCli.Ping(ctx)
-	})
+	_, err = r.dockerCli.Ping(ctx)
 	if err != nil {
 		return fmt.Errorf("error connecting to docker daemon: %w", err)
 	}
@@ -265,22 +264,6 @@ func (r *RuleManager) initDB(ctx context.Context, dbFile string) error {
 	}
 
 	return nil
-}
-
-// withTimeout runs f with a timeout derived from [context.WithTimeout].
-// Using withTimeout guarantees that:
-//
-//   - ctx is only shadowed in withTimeout's scope
-//   - The child context will have it's resources released immediately
-//     after f returns
-//
-// The main goal of withTimeout is to prevent shadowing ctx with a
-// context with a timeout, having that timeout expire and the next call
-// that uses ctx immediately failing.
-func withTimeout[T any](ctx context.Context, timeout time.Duration, f func(ctx context.Context) (T, error)) (T, error) {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	return f(ctx)
 }
 
 func addFilters(ctx context.Context, client dockerClient) (<-chan events.Message, <-chan error) {
