@@ -43,6 +43,8 @@ type ruleConfig struct {
 	Proto     protocol
 	Port      uint16
 	Verdict   verdict
+
+	skip bool
 }
 
 func (r ruleConfig) MarshalLogObject(enc zapcore.ObjectEncoder) error {
@@ -104,6 +106,10 @@ func (a addrOrRange) MarshalText() ([]byte, error) {
 	return a.addrRange.MarshalText()
 }
 
+func (a addrOrRange) MarshalBinary() ([]byte, error) {
+	return a.MarshalText()
+}
+
 func (a *addrOrRange) UnmarshalText(text []byte) error {
 	if bytes.ContainsRune(text, '/') {
 		prefix := new(netip.Prefix)
@@ -117,6 +123,10 @@ func (a *addrOrRange) UnmarshalText(text []byte) error {
 		return a.addrRange.UnmarshalText(text)
 	}
 	return a.addr.UnmarshalText(text)
+}
+
+func (a *addrOrRange) UnmarshalBinary(data []byte) error {
+	return a.UnmarshalText(data)
 }
 
 func (a addrOrRange) MarshalLogObject(enc zapcore.ObjectEncoder) error {

@@ -34,7 +34,13 @@ func (r *RuleManager) clearRules(ctx context.Context) error {
 	for _, container := range containers {
 		truncID := container.ID[:12]
 		r.logger.Info("deleting rules", zap.String("container.id", truncID), zap.String("container.name", container.Name))
-		r.deleteContainerRules(ctx, container.ID, container.Name)
+		if err := r.deleteContainerRules(ctx, container.ID, container.Name); err != nil {
+			r.logger.Error("error deleting rules",
+				zap.String("container.id", truncID),
+				zap.String("container.name", container.Name),
+				zap.Error(err),
+			)
+		}
 	}
 
 	nfc, err := r.newFirewallClient()
@@ -96,11 +102,18 @@ func (r *RuleManager) cleanupRules(ctx context.Context) error {
 		c, err := withTimeout(ctx, r.timeout, func(ctx context.Context) (types.ContainerJSON, error) {
 			return r.dockerCli.ContainerInspect(ctx, container.ID)
 		})
+		truncID := container.ID[:12]
 		if err != nil {
 			if client.IsErrNotFound(err) {
 				contName := stripName(container.Name)
-				r.logger.Info("cleaning rules of removed container", zap.String("container.id", container.ID[:12]), zap.String("container.name", contName))
-				r.deleteContainerRules(ctx, container.ID, contName)
+				r.logger.Info("cleaning rules of removed container", zap.String("container.id", truncID), zap.String("container.name", contName))
+				if err := r.deleteContainerRules(ctx, container.ID, contName); err != nil {
+					r.logger.Error("error deleting rules",
+						zap.String("container.id", truncID),
+						zap.String("container.name", container.Name),
+						zap.Error(err),
+					)
+				}
 				continue
 			} else {
 				r.logger.Error("error inspecting container: %w", zap.Error(err))
@@ -109,8 +122,14 @@ func (r *RuleManager) cleanupRules(ctx context.Context) error {
 		}
 		if !c.State.Running {
 			contName := stripName(container.Name)
-			r.logger.Info("cleaning rules of stopped container", zap.String("container.id", container.ID[:12]), zap.String("container.name", contName))
-			r.deleteContainerRules(ctx, container.ID, contName)
+			r.logger.Info("cleaning rules of stopped container", zap.String("container.id", truncID), zap.String("container.name", contName))
+			if err := r.deleteContainerRules(ctx, container.ID, contName); err != nil {
+				r.logger.Error("error deleting rules",
+					zap.String("container.id", truncID),
+					zap.String("container.name", container.Name),
+					zap.Error(err),
+				)
+			}
 		}
 	}
 
@@ -120,6 +139,7 @@ func (r *RuleManager) cleanupRules(ctx context.Context) error {
 // deleteRules removes nftables rules for stopped or killed containers.
 func (r *RuleManager) deleteRules(ctx context.Context) {
 	for id := range r.deleteCh {
+		truncID := id[:12]
 		name, err := r.db.GetContainerName(ctx, id)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -127,37 +147,40 @@ func (r *RuleManager) deleteRules(ctx context.Context) {
 				// encountered when creating rules for it
 				continue
 			}
-			r.logger.Error("error getting name of container", zap.String("container.id", id[:12]), zap.Error(err))
+			r.logger.Error("error getting name of container", zap.String("container.id", truncID), zap.Error(err))
 			continue
 		}
 
-		r.logger.Info("deleting rules", zap.String("container.id", id[:12]), zap.String("container.name", name))
+		r.logger.Info("deleting rules", zap.String("container.id", truncID), zap.String("container.name", name))
 		r.deleteContainerRules(ctx, id, name)
+		if err := r.deleteContainerRules(ctx, id, name); err != nil {
+			r.logger.Error("error deleting rules",
+				zap.String("container.id", truncID),
+				zap.String("container.name", name),
+				zap.Error(err),
+			)
+		}
 	}
 }
 
 // deleteContainerRules removes all nftables rules for a container.
-func (r *RuleManager) deleteContainerRules(ctx context.Context, id, name string) {
+func (r *RuleManager) deleteContainerRules(ctx context.Context, id, name string) error {
 	logger := r.logger.With(zap.String("container.id", id[:12]), zap.String("container.name", name))
 	nfc, err := r.newFirewallClient()
 	if err != nil {
-		logger.Error("error creating netlink connection", zap.Error(err))
-		return
+		return fmt.Errorf("error creating netlink connection: %w", err)
 	}
 
 	// delete rules from whalewall chain
 	rules, err := nfc.GetRules(filterTable, whalewallChain)
 	if err != nil {
-		logger.Error("error getting rules of chain", zap.String("chain.name", whalewallChain.Name), zap.Error(err))
-		return
+		return fmt.Errorf("error getting rules of chain %s: %w", whalewallChain.Name, err)
 	}
-
 	deleteRulesFromContainer(logger, nfc, rules, id)
 
 	addrs, err := r.db.GetContainerAddrs(ctx, id)
 	if err != nil {
-		logger.Error("error getting container addrs", zap.Error(err))
-		return
+		return fmt.Errorf("error getting container addrs: %w", err)
 	}
 
 	for _, addr := range addrs {
@@ -176,8 +199,7 @@ func (r *RuleManager) deleteContainerRules(ctx context.Context, id, name string)
 
 	estContainers, err := r.db.GetEstContainers(ctx, id)
 	if err != nil {
-		logger.Error("error getting established containers", zap.Error(err))
-		return
+		return fmt.Errorf("error getting established containers: %w", err)
 	}
 
 	// delete rules in other container's chains
@@ -206,9 +228,11 @@ func (r *RuleManager) deleteContainerRules(ctx context.Context, id, name string)
 	}
 
 	logger.Debug("deleting from database")
-	if err := r.deleteContainer(ctx, logger, id); err != nil {
-		logger.Error("error deleting container from database", zap.Error(err))
+	if err := r.deleteContainer(ctx, logger, id, name); err != nil {
+		return fmt.Errorf("error deleting container from database: %w", err)
 	}
+
+	return nil
 }
 
 // deleteRulesFromContainer removes nftables rules that belong to a container

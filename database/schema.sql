@@ -26,3 +26,13 @@ CREATE TABLE est_containers (
   FOREIGN KEY(src_container_id) REFERENCES containers(id),
   FOREIGN KEY(dst_container_id) REFERENCES containers(id)
 );
+
+CREATE TABLE waiting_container_rules (
+  src_container_id   TEXT    NOT NULL,
+  dst_container_name TEXT    NOT NULL,
+  rule               BLOB    NOT NULL,
+  active             BOOLEAN NOT NULL,
+
+  PRIMARY KEY(src_container_id, dst_container_name, rule),
+  FOREIGN KEY (src_container_id) REFERENCES containers(id)
+);

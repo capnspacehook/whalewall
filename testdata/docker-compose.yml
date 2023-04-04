@@ -2,8 +2,6 @@ version: "3"
 services:
   client:
     command: "80"
-    depends_on:
-      - server
     image: ghcr.io/capnspacehook/eavesdropper
     labels:
       whalewall.enabled: true
@@ -22,12 +20,14 @@ services:
           - network: default
             container: server
             proto: tcp
-            port: 9001
+            port: 756
     ports:
       - "8080:80"
 
   server:
-    command: "80 9001"
+    command: "80 756 9001"
+    depends_on:
+      - client
     image: ghcr.io/capnspacehook/eavesdropper
     labels:
       whalewall.enabled: true
