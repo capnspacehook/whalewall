@@ -59,7 +59,7 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@main
+        uses: sigstore/cosign-installer@v3
 
       - name: Install Docker buildx
         uses: docker/setup-buildx-action@v2
@@ -130,7 +130,7 @@ jobs:
       - name: Sign container image
         env:
           COSIGN_EXPERIMENTAL: "true"
-        run: cosign sign ghcr.io/${{ github.repository }}@${{ steps.build-push.outputs.digest }}
+        run: cosign sign --yes ghcr.io/${{ github.repository }}@${{ steps.build-push.outputs.digest }}
 
       - name: Scan container image for vulnerabilities
         uses: chainguard-images/actions/vul-scans@main
