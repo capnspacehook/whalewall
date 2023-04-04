@@ -45,8 +45,6 @@ const (
 )
 
 var (
-	errShuttingDown = errors.New("shutting down")
-
 	localAddr     = netip.MustParseAddr("127.0.0.1")
 	zeroUint32    = []byte{0, 0, 0, 0}
 	acceptVerdict = &expr.Verdict{
@@ -61,9 +59,6 @@ var (
 func (r *RuleManager) createRules(ctx context.Context) {
 	for container := range r.createCh {
 		if err := r.createContainerRules(ctx, container); err != nil {
-			if errors.Is(err, errShuttingDown) {
-				return
-			}
 			r.logger.Error("error creating rules",
 				zap.String("container.id", container.ID[:12]),
 				zap.String("container.name", stripName(container.Name)),
@@ -230,9 +225,7 @@ func (r *RuleManager) populateOutputRules(ctx context.Context, cfg config, id, p
 	if i == -1 {
 		return nil
 	}
-	listedConts, err := withTimeout(ctx, r.timeout, func(ctx context.Context) ([]types.Container, error) {
-		return r.dockerCli.ContainerList(ctx, types.ContainerListOptions{})
-	})
+	listedConts, err := r.dockerCli.ContainerList(ctx, types.ContainerListOptions{})
 	if err != nil {
 		return fmt.Errorf("error listing running containers: %w", err)
 	}
@@ -262,9 +255,7 @@ func (r *RuleManager) populateOutputRules(ctx context.Context, cfg config, id, p
 				// validate container settings
 				cont, ok := containers[ruleCfg.Container]
 				if !ok {
-					cont, err = withTimeout(ctx, r.timeout, func(ctx context.Context) (types.ContainerJSON, error) {
-						return r.dockerCli.ContainerInspect(ctx, listedCont.ID)
-					})
+					cont, err = r.dockerCli.ContainerInspect(ctx, listedCont.ID)
 					if err != nil {
 						return fmt.Errorf("error inspecting container %s", listedCont.ID[:12])
 					}
@@ -679,9 +670,7 @@ func (r *RuleManager) createWaitingContainerRules(ctx context.Context, logger *z
 		}
 
 		// find source container IP (not this container)
-		srcCont, err := withTimeout(ctx, r.timeout, func(ctx context.Context) (types.ContainerJSON, error) {
-			return r.dockerCli.ContainerInspect(ctx, waitingRule.SrcContainerID)
-		})
+		srcCont, err := r.dockerCli.ContainerInspect(ctx, waitingRule.SrcContainerID)
 		if err != nil {
 			return nil, fmt.Errorf("error inspecting container %q: %w", waitingRule.Name, err)
 		}
