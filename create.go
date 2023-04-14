@@ -117,7 +117,6 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 	}
 
 	// create chain for this container's rules
-	nftRules := make([]*nftables.Rule, 0, len(rulesCfg.Output)*2)
 	contChainName := buildChainName(contName, container.ID)
 	chain := &nftables.Chain{
 		Name:  contChainName,
@@ -125,59 +124,8 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 		Type:  nftables.ChainTypeFilter,
 	}
 	nfc.AddChain(chain)
-
-	// if no rules were explicitly specified, only the rule that drops
-	// traffic to/from the container will be added
-	estContainers := make(map[string]struct{})
-	service := container.Config.Labels[composeServiceLabel]
-	if configExists {
-		if err := r.populateOutputRules(ctx, rulesCfg, container.ID, project, addrs, estContainers); err != nil {
-			return fmt.Errorf("error validating rules: %w", err)
-		}
-
-		// handle port mapping rules
-		var err error
-		var hostRules []*nftables.Rule
-		nftRules, hostRules, err = r.createPortMappingRules(logger, container, contName, rulesCfg.MappedPorts, addrs, chain, nftRules)
-		if err != nil {
-			return fmt.Errorf("error creating port mapping rules: %w", err)
-		}
-		for _, hostRule := range hostRules {
-			nfc.AddRule(hostRule)
-		}
-
-		// handle outbound rules
-		nftRules, err = r.createOutputRules(ctx, logger, rulesCfg.Output, project, addrs, chain, contName, container.ID, nftRules)
-		if err != nil {
-			return fmt.Errorf("error creating output rules: %w", err)
-		}
-	}
-
-	// create rules that allow traffic from another container to this
-	// container if necessary that couldn't be created before
-	nftRules, err = r.createWaitingContainerRules(ctx, logger, container.ID, contName, service, project, addrs, chain, estContainers, nftRules)
-	if err != nil {
-		return fmt.Errorf("error creating waiting output rules: %w", err)
-	}
-
-	// create rule to drop all not explicitly allowed traffic
-	nftRules = append(nftRules, createDropRule(chain, container.ID))
-
-	// ensure we aren't creating existing rules
-	curRules, err := nfc.GetRules(filterTable, whalewallChain)
-	if err != nil {
-		return fmt.Errorf("error getting rules of %q: %w", whalewallChainName, err)
-	}
-	for i := range nftRules {
-		if nftRules[i].Chain.Name == whalewallChainName {
-			if findRule(logger, nftRules[i], curRules) {
-				nftRules = slices.Delete(nftRules, i, i+1)
-			}
-		}
-	}
-	// insert rules in reverse order that they were created in to maintain order
-	for i := len(nftRules) - 1; i >= 0; i-- {
-		nfc.InsertRule(nftRules[i])
+	if err := nfc.Flush(); err != nil {
+		return fmt.Errorf("error creating chain: %w", err)
 	}
 
 	// add container IPs to jump set so traffic to/from this
@@ -192,13 +140,81 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 			},
 		})
 	}
-
 	if err := nfc.SetAddElements(containerAddrSet, addrElems); err != nil {
-		return fmt.Errorf("error adding elements to set %q: %w", containerAddrSetName, err)
+		return fmt.Errorf("error marshaling set elements: %w", err)
+	}
+	if err := nfc.Flush(); err != nil {
+		return fmt.Errorf("error adding element to container address set: %w", err)
 	}
 
+	// create rule to drop all not explicitly allowed traffic
+	nfc.AddRule(createDropRule(chain, container.ID))
 	if err := nfc.Flush(); err != nil {
-		return fmt.Errorf("error flushing nftables commands: %w", err)
+		return fmt.Errorf("error creating drop rule: %w", err)
+	}
+
+	createRules := func(rules []*nftables.Rule) error {
+		// insert rules in reverse order that they were created in to maintain order
+		for i := len(rules) - 1; i >= 0; i-- {
+			nfc.InsertRule(rules[i])
+		}
+		return nfc.Flush()
+	}
+
+	estContainers := make(map[string]struct{})
+	if configExists {
+		if err := r.populateOutputRules(ctx, rulesCfg, container.ID, project, addrs, estContainers); err != nil {
+			return fmt.Errorf("error validating rules: %w", err)
+		}
+	}
+
+	// create rules that allow traffic from another container to this
+	// container if necessary that couldn't be created before
+	service := container.Config.Labels[composeServiceLabel]
+	waitingRules, err := r.createWaitingContainerRules(ctx, logger, container.ID, contName, service, project, addrs, chain, estContainers)
+	if err != nil {
+		return fmt.Errorf("error creating waiting output rules: %w", err)
+	}
+	if err := createRules(waitingRules); err != nil {
+		logger.Error("error creating waiting rules", zap.Error(err))
+	}
+
+	// if no rules were explicitly specified, only the rule that drops
+	// traffic to/from the container will be added
+	if configExists {
+		// handle outbound rules
+		outputRules, err := r.createOutputRules(ctx, logger, rulesCfg.Output, project, addrs, chain, contName, container.ID)
+		if err != nil {
+			return fmt.Errorf("error creating output rules: %w", err)
+		}
+		if err := createRules(outputRules); err != nil {
+			logger.Error("error creating output rules", zap.Error(err))
+		}
+
+		// handle port mapping rules
+		portMapRules, err := r.createPortMappingRules(logger, container, contName, rulesCfg.MappedPorts, addrs, chain)
+		if err != nil {
+			return fmt.Errorf("error creating port mapping rules: %w", err)
+		}
+		// ensure we aren't creating existing rules
+		curRules, err := nfc.GetRules(filterTable, whalewallChain)
+		if err != nil {
+			return fmt.Errorf("error getting rules of %q: %w", whalewallChainName, err)
+		}
+		j := 0
+		for i := range portMapRules {
+			if portMapRules[i].Chain.Name == whalewallChainName {
+				if findRule(logger, portMapRules[i], curRules) {
+					continue
+				}
+			}
+			portMapRules[j] = portMapRules[i]
+			j++
+		}
+		portMapRules = portMapRules[:j]
+		if err := createRules(portMapRules); err != nil {
+			logger.Error("error creating mapped port rules", zap.Error(err))
+		}
 	}
 
 	logger.Debug("adding to database")
@@ -336,7 +352,7 @@ func (r *RuleManager) populateOutputRules(ctx context.Context, cfg config, id, p
 // gave the network.
 func findNetwork[T any](network, project string, addrs map[string]T) (string, T, bool) {
 	var zero T
-	netNames := []string{
+	netNames := [2]string{
 		network,
 		project + "_" + network,
 	}
@@ -385,7 +401,7 @@ func buildChainName(name, id string) string {
 
 // createPortMappingRules adds nftables rules to allow or deny access to
 // mapped ports.
-func (r *RuleManager) createPortMappingRules(logger *zap.Logger, container types.ContainerJSON, contName string, mappedPortsCfg mappedPorts, addrs map[string][]byte, chain *nftables.Chain, nftRules []*nftables.Rule) ([]*nftables.Rule, []*nftables.Rule, error) {
+func (r *RuleManager) createPortMappingRules(logger *zap.Logger, container types.ContainerJSON, contName string, mappedPortsCfg mappedPorts, addrs map[string][]byte, chain *nftables.Chain) ([]*nftables.Rule, error) {
 	// check if there are any mapped ports to create rules for
 	var hasMappedPorts bool
 	for _, hostPorts := range container.NetworkSettings.Ports {
@@ -398,10 +414,10 @@ func (r *RuleManager) createPortMappingRules(logger *zap.Logger, container types
 	}
 	if (mappedPortsCfg.Localhost.Allow || mappedPortsCfg.External.Allow) && !hasMappedPorts {
 		logger.Warn("local and/or external access to mapped ports is allowed, but there are not any mapped ports")
-		return nftRules, nil, nil
+		return nil, nil
 	}
 	if !hasMappedPorts {
-		return nftRules, nil, nil
+		return nil, nil
 	}
 
 	// prepend container name and ID to log prefixes
@@ -412,11 +428,11 @@ func (r *RuleManager) createPortMappingRules(logger *zap.Logger, container types
 		mappedPortsCfg.External.LogPrefix = formatLogPrefix(mappedPortsCfg.External.LogPrefix, contName, container.ID)
 	}
 
-	hostPortRules := make(map[uint16][]*nftables.Rule)
+	nftRules := make([]*nftables.Rule, 0, len(container.NetworkSettings.Networks))
 	for netName, netSettings := range container.NetworkSettings.Networks {
 		gateway, err := netip.ParseAddr(netSettings.Gateway)
 		if err != nil {
-			return nil, nil, fmt.Errorf("error parsing gateway of network: %w", err)
+			return nil, fmt.Errorf("error parsing gateway of network: %w", err)
 		}
 
 		// sort mapped ports so rules are created deterministically making
@@ -430,13 +446,13 @@ func (r *RuleManager) createPortMappingRules(logger *zap.Logger, container types
 
 			var proto protocol
 			if err := proto.UnmarshalText([]byte(port.Proto())); err != nil {
-				return nil, nil, fmt.Errorf("error parsing protocol: %w", err)
+				return nil, fmt.Errorf("error parsing protocol: %w", err)
 			}
 
 			for _, hostPort := range hostPorts {
 				addr, err := netip.ParseAddr(hostPort.HostIP)
 				if err != nil {
-					return nil, nil, fmt.Errorf("error parsing IP of port mapping: %w", err)
+					return nil, fmt.Errorf("error parsing IP of port mapping: %w", err)
 				}
 				// TODO: support IPv6
 				if addr.Is6() {
@@ -494,7 +510,7 @@ func (r *RuleManager) createPortMappingRules(logger *zap.Logger, container types
 					// from localhost to be seen by Docker at all.
 					hostPortInt, err := strconv.ParseUint(hostPort.HostPort, 10, 16)
 					if err != nil {
-						return nil, nil, fmt.Errorf("error parsing host port of port mapping: %w", err)
+						return nil, fmt.Errorf("error parsing host port of port mapping: %w", err)
 					}
 
 					localhostDropRule := ruleDetails{
@@ -544,17 +560,13 @@ func (r *RuleManager) createPortMappingRules(logger *zap.Logger, container types
 		}
 	}
 
-	hostRules := make([]*nftables.Rule, 0, len(hostPortRules)*2)
-	for _, rules := range hostPortRules {
-		hostRules = append(hostRules, rules...)
-	}
-
-	return nftRules, hostRules, nil
+	return nftRules, nil
 }
 
 // createOutputRules adds nftables rules to allow outbound access from
 // a container.
-func (r *RuleManager) createOutputRules(ctx context.Context, logger *zap.Logger, ruleCfgs []ruleConfig, project string, addrs map[string][]byte, chain *nftables.Chain, name, id string, nftRules []*nftables.Rule) ([]*nftables.Rule, error) {
+func (r *RuleManager) createOutputRules(ctx context.Context, logger *zap.Logger, ruleCfgs []ruleConfig, project string, addrs map[string][]byte, chain *nftables.Chain, name, id string) ([]*nftables.Rule, error) {
+	nftRules := make([]*nftables.Rule, 0, len(ruleCfgs)*3)
 	for _, ruleCfg := range ruleCfgs {
 		// prepend container name and ID to log prefixes
 		if ruleCfg.LogPrefix != "" {
@@ -638,7 +650,7 @@ func (r *RuleManager) getContainerIDAndName(ctx context.Context, contName string
 // from another container to this container. The other container was
 // processed before this container, so rules concerning this container
 // couldn't be created until now.
-func (r *RuleManager) createWaitingContainerRules(ctx context.Context, logger *zap.Logger, id, name, service, project string, addrs map[string][]byte, chain *nftables.Chain, estContainers map[string]struct{}, nftRules []*nftables.Rule) ([]*nftables.Rule, error) {
+func (r *RuleManager) createWaitingContainerRules(ctx context.Context, logger *zap.Logger, id, name, service, project string, addrs map[string][]byte, chain *nftables.Chain, estContainers map[string]struct{}) ([]*nftables.Rule, error) {
 	var (
 		waitingRules []database.GetWaitingContainerRulesRow
 		err          error
@@ -659,9 +671,10 @@ func (r *RuleManager) createWaitingContainerRules(ctx context.Context, logger *z
 		break
 	}
 	if waitingRules == nil {
-		return nftRules, nil
+		return nil, nil
 	}
 
+	nftRules := make([]*nftables.Rule, 0, len(waitingRules)*3)
 	for _, waitingRule := range waitingRules {
 		decoder := gob.NewDecoder(bytes.NewReader(waitingRule.Rule))
 		var ruleCfg ruleConfig
