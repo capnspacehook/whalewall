@@ -27,8 +27,9 @@ import (
 
 const (
 	dbCommands = `
+PRAGMA foreign_keys = true;
 PRAGMA busy_timeout = 1000;
-PRAGMA journal_mode=WAL;
+PRAGMA journal_mode = WAL;
 `
 	dummyID   = "dummy_id"
 	dummyName = "dummy_name"
@@ -247,20 +248,20 @@ func (r *RuleManager) initDB(ctx context.Context, dbFile string) error {
 		if err != nil {
 			return err
 		}
-		defer tx.Rollback(ctx)
+		defer tx.Rollback()
 
-		err = r.db.AddContainer(ctx, database.AddContainerParams{
+		err = tx.AddContainer(ctx, database.AddContainerParams{
 			ID:   dummyID,
 			Name: dummyName,
 		})
 		if err != nil {
 			return fmt.Errorf("error adding container to database: %w", err)
 		}
-		err = r.db.DeleteContainer(ctx, dummyID)
+		err = tx.DeleteContainer(ctx, dummyID)
 		if err != nil {
 			return fmt.Errorf("error deleting container in database: %w", err)
 		}
-		return tx.Commit(ctx)
+		return tx.Commit()
 	}
 
 	return nil

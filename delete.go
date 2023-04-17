@@ -163,6 +163,12 @@ func (r *RuleManager) deleteContainerRules(ctx context.Context, id, name string)
 		return fmt.Errorf("error creating netlink connection: %w", err)
 	}
 
+	tx, err := r.db.Begin(ctx, logger)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
 	// delete rules from whalewall chain
 	rules, err := nfc.GetRules(filterTable, whalewallChain)
 	if err != nil {
@@ -170,7 +176,7 @@ func (r *RuleManager) deleteContainerRules(ctx context.Context, id, name string)
 	}
 	deleteRulesFromContainer(logger, nfc, rules, id)
 
-	addrs, err := r.db.GetContainerAddrs(ctx, id)
+	addrs, err := tx.GetContainerAddrs(ctx, id)
 	if err != nil {
 		return fmt.Errorf("error getting container addrs: %w", err)
 	}
@@ -188,7 +194,7 @@ func (r *RuleManager) deleteContainerRules(ctx context.Context, id, name string)
 		}
 	}
 
-	estContainers, err := r.db.GetEstContainers(ctx, id)
+	estContainers, err := tx.GetEstContainers(ctx, id)
 	if err != nil {
 		return fmt.Errorf("error getting established containers: %w", err)
 	}
@@ -218,7 +224,7 @@ func (r *RuleManager) deleteContainerRules(ctx context.Context, id, name string)
 	}
 
 	logger.Debug("deleting from database")
-	if err := r.deleteContainer(ctx, logger, id, name); err != nil {
+	if err := r.deleteContainer(ctx, tx, id, name); err != nil {
 		return fmt.Errorf("error deleting container from database: %w", err)
 	}
 

@@ -4,15 +4,13 @@ import (
 	"context"
 	"fmt"
 
-	"go.uber.org/zap"
-
 	"github.com/capnspacehook/whalewall/database"
 )
 
 //go:generate sqlc generate
 
-func (r *RuleManager) containerExists(ctx context.Context, id string) (bool, error) {
-	e, err := r.db.ContainerExists(ctx, id)
+func (r *RuleManager) containerExists(ctx context.Context, db database.Querier, id string) (bool, error) {
+	e, err := db.ContainerExists(ctx, id)
 	if err != nil {
 		return false, err
 	}
@@ -24,21 +22,7 @@ func (r *RuleManager) containerExists(ctx context.Context, id string) (bool, err
 	return exists == 1, nil
 }
 
-func (r *RuleManager) addContainer(ctx context.Context, logger *zap.Logger, id, name, service string, addrs map[string][]byte, estContainers map[string]struct{}) error {
-	tx, err := r.db.Begin(ctx, logger)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-
-	err = tx.AddContainer(ctx, database.AddContainerParams{
-		ID:   id,
-		Name: name,
-	})
-	if err != nil {
-		return fmt.Errorf("error adding container to database: %w", err)
-	}
-
+func (r *RuleManager) addContainer(ctx context.Context, tx *database.TX, id, name, service string, addrs map[string][]byte, estContainers map[string]struct{}) error {
 	for _, addr := range addrs {
 		err := tx.AddContainerAddr(ctx, database.AddContainerAddrParams{
 			Addr:        addr,
@@ -74,7 +58,7 @@ func (r *RuleManager) addContainer(ctx context.Context, logger *zap.Logger, id, 
 		}
 	}
 
-	return tx.Commit(ctx)
+	return tx.Commit()
 }
 
 func containerAliases(name, service string) []string {
@@ -86,20 +70,17 @@ func containerAliases(name, service string) []string {
 	return aliases
 }
 
-func (r *RuleManager) deleteContainer(ctx context.Context, logger *zap.Logger, id, name string) error {
-	tx, err := r.db.Begin(ctx, logger)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-
+func (r *RuleManager) deleteContainer(ctx context.Context, tx *database.TX, id, name string) error {
 	if err := tx.DeleteContainerAddrs(ctx, id); err != nil {
 		return fmt.Errorf("error deleting container addrs in database: %w", err)
 	}
 	if err := tx.DeleteContainerAliases(ctx, id); err != nil {
 		return fmt.Errorf("error deleting container aliases in database: %w", err)
 	}
-	if err := tx.DeleteEstContainers(ctx, id); err != nil {
+	if err := tx.DeleteEstContainers(ctx, database.DeleteEstContainersParams{
+		SrcContainerID: id,
+		DstContainerID: id,
+	}); err != nil {
 		return fmt.Errorf("error deleting established container in database: %w", err)
 	}
 	// delete waiting container rules that this container created
@@ -115,5 +96,5 @@ func (r *RuleManager) deleteContainer(ctx context.Context, logger *zap.Logger, i
 		return fmt.Errorf("error deleting container in database: %w", err)
 	}
 
-	return tx.Commit(ctx)
+	return tx.Commit()
 }

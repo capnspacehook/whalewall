@@ -190,6 +190,7 @@ func (m *mockFirewall) SetDeleteElements(s *nftables.Set, vals []nftables.SetEle
 		if i == -1 {
 			m.logger.Errorf("set element with key %v not found", v.Key)
 			m.flushErr = syscall.ENOENT
+			continue
 		}
 		elements = slices.Delete(elements, i, i+1)
 	}
