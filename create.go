@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/docker/docker/api/types"
 	"github.com/google/nftables"
@@ -143,7 +144,7 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 	if err := nfc.SetAddElements(containerAddrSet, addrElems); err != nil {
 		return fmt.Errorf("error marshaling set elements: %w", err)
 	}
-	if err := nfc.Flush(); err != nil {
+	if err := ignoringErr(nfc.Flush, syscall.EEXIST); err != nil {
 		return fmt.Errorf("error adding element to container address set: %w", err)
 	}
 

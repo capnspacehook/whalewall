@@ -3,7 +3,6 @@ package whalewall
 import (
 	"context"
 	"errors"
-	"syscall"
 	"time"
 )
 
@@ -23,11 +22,11 @@ func withTimeout[T, E any](ctx context.Context, timeout time.Duration, f func(ct
 	return f(ctx)
 }
 
-// ignoringENOENT calls f and discards the error if any error in the error
-// tree matches [syscall.ENOENT].
-func ignoringENOENT(f func() error) error {
+// ignoringErr calls f and discards the error if any error in the error
+// tree matches errToIgnore.
+func ignoringErr(f func() error, errToIgnore error) error {
 	err := f()
-	if err == nil || (err != nil && errors.Is(err, syscall.ENOENT)) {
+	if err == nil || (err != nil && errors.Is(err, errToIgnore)) {
 		return nil
 	}
 	return err
