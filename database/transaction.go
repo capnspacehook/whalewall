@@ -43,7 +43,7 @@ func (d *DB) Begin(ctx context.Context, logger *zap.Logger) (*TX, error) {
 	}, nil
 }
 
-func (t *TX) Rollback(ctx context.Context) bool {
+func (t *TX) Rollback() bool {
 	if err := t.tx.Rollback(); err != nil {
 		if errors.Is(err, sql.ErrTxDone) {
 			return false
@@ -55,7 +55,7 @@ func (t *TX) Rollback(ctx context.Context) bool {
 	return true
 }
 
-func (t *TX) Commit(ctx context.Context) error {
+func (t *TX) Commit() error {
 	if err := t.tx.Commit(); err != nil {
 		return fmt.Errorf("error committing database transaction: %w", err)
 	}

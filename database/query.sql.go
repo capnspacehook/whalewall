@@ -205,11 +205,17 @@ const deleteEstContainers = `-- name: DeleteEstContainers :exec
 DELETE FROM
 	est_containers
 WHERE
-	src_container_id = ?
+	src_container_id = ? OR
+	dst_container_id = ?
 `
 
-func (q *Queries) DeleteEstContainers(ctx context.Context, srcContainerID string) error {
-	_, err := q.exec(ctx, q.deleteEstContainersStmt, deleteEstContainers, srcContainerID)
+type DeleteEstContainersParams struct {
+	SrcContainerID string
+	DstContainerID string
+}
+
+func (q *Queries) DeleteEstContainers(ctx context.Context, arg DeleteEstContainersParams) error {
+	_, err := q.exec(ctx, q.deleteEstContainersStmt, deleteEstContainers, arg.SrcContainerID, arg.DstContainerID)
 	return err
 }
 

@@ -92,7 +92,8 @@ WHERE
 DELETE FROM
 	est_containers
 WHERE
-	src_container_id = ?;
+	src_container_id = ? OR
+	dst_container_id = ?;
 
 -- name: DeactivateWaitingContainerRules :exec
 UPDATE

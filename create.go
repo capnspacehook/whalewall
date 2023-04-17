@@ -99,7 +99,6 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 			return fmt.Errorf("error validating rules: %w", err)
 		}
 	}
-	project := container.Config.Labels[composeProjectLabel]
 
 	// ensure specified networks and containers in rules are valid
 	addrs := make(map[string][]byte, len(container.NetworkSettings.Networks))
@@ -161,9 +160,25 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 		return nfc.Flush()
 	}
 
+	// add container to database
+	tx, err := r.db.Begin(ctx, logger)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	err = tx.AddContainer(ctx, database.AddContainerParams{
+		ID:   container.ID,
+		Name: contName,
+	})
+	if err != nil {
+		return fmt.Errorf("error adding container to database: %w", err)
+	}
+
+	project := container.Config.Labels[composeProjectLabel]
 	estContainers := make(map[string]struct{})
 	if configExists {
-		if err := r.populateOutputRules(ctx, rulesCfg, container.ID, project, addrs, estContainers); err != nil {
+		if err := r.populateOutputRules(ctx, tx, rulesCfg, container.ID, project, addrs, estContainers); err != nil {
 			return fmt.Errorf("error validating rules: %w", err)
 		}
 	}
@@ -171,7 +186,7 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 	// create rules that allow traffic from another container to this
 	// container if necessary that couldn't be created before
 	service := container.Config.Labels[composeServiceLabel]
-	waitingRules, err := r.createWaitingContainerRules(ctx, logger, container.ID, contName, service, project, addrs, chain, estContainers)
+	waitingRules, err := r.createWaitingContainerRules(ctx, logger, tx, container.ID, contName, service, project, addrs, chain, estContainers)
 	if err != nil {
 		return fmt.Errorf("error creating waiting output rules: %w", err)
 	}
@@ -183,7 +198,7 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 	// traffic to/from the container will be added
 	if configExists {
 		// handle outbound rules
-		outputRules, err := r.createOutputRules(ctx, logger, rulesCfg.Output, project, addrs, chain, contName, container.ID)
+		outputRules, err := r.createOutputRules(ctx, logger, tx, rulesCfg.Output, project, addrs, chain, contName, container.ID)
 		if err != nil {
 			return fmt.Errorf("error creating output rules: %w", err)
 		}
@@ -219,7 +234,7 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 
 	logger.Debug("adding to database")
 
-	return r.addContainer(ctx, logger, container.ID, contName, service, addrs, estContainers)
+	return r.addContainer(ctx, tx, container.ID, contName, service, addrs, estContainers)
 }
 
 // stripName removes the leading "/" from a container name if necessary.
@@ -232,7 +247,7 @@ func stripName(name string) string {
 
 // populateOutputRules attempts to find the IPs of containers specified
 // in output rules and fills the rules appropriately.
-func (r *RuleManager) populateOutputRules(ctx context.Context, cfg config, id, project string, addrs map[string][]byte, estConts map[string]struct{}) error {
+func (r *RuleManager) populateOutputRules(ctx context.Context, tx *database.TX, cfg config, id, project string, addrs map[string][]byte, estConts map[string]struct{}) error {
 	// only get a list of containers if at least one rule specifies a
 	// container
 	i := slices.IndexFunc(cfg.Output, func(r ruleConfig) bool {
@@ -300,7 +315,7 @@ func (r *RuleManager) populateOutputRules(ctx context.Context, cfg config, id, p
 				// if the container exists in the database it's been
 				// processed already, and we can create rules involving
 				// it now
-				exists, err := r.containerExists(ctx, cont.ID)
+				exists, err := r.containerExists(ctx, tx, cont.ID)
 				if err != nil {
 					return fmt.Errorf("error querying container %s from database: %w", cont.ID[:12], err)
 				}
@@ -330,7 +345,7 @@ func (r *RuleManager) populateOutputRules(ctx context.Context, cfg config, id, p
 				if err := encoder.Encode(ruleCfg); err != nil {
 					return fmt.Errorf("error encoding waiting container rule: %w", err)
 				}
-				err := r.db.AddWaitingContainerRule(ctx, database.AddWaitingContainerRuleParams{
+				err := tx.AddWaitingContainerRule(ctx, database.AddWaitingContainerRuleParams{
 					SrcContainerID:   id,
 					DstContainerName: ruleCfg.Container,
 					Rule:             buf.Bytes(),
@@ -565,7 +580,7 @@ func (r *RuleManager) createPortMappingRules(logger *zap.Logger, container types
 
 // createOutputRules adds nftables rules to allow outbound access from
 // a container.
-func (r *RuleManager) createOutputRules(ctx context.Context, logger *zap.Logger, ruleCfgs []ruleConfig, project string, addrs map[string][]byte, chain *nftables.Chain, name, id string) ([]*nftables.Rule, error) {
+func (r *RuleManager) createOutputRules(ctx context.Context, logger *zap.Logger, tx *database.TX, ruleCfgs []ruleConfig, project string, addrs map[string][]byte, chain *nftables.Chain, name, id string) ([]*nftables.Rule, error) {
 	nftRules := make([]*nftables.Rule, 0, len(ruleCfgs)*3)
 	for _, ruleCfg := range ruleCfgs {
 		// prepend container name and ID to log prefixes
@@ -595,7 +610,7 @@ func (r *RuleManager) createOutputRules(ctx context.Context, logger *zap.Logger,
 					continue
 				}
 
-				dstID, dstName, err := r.getContainerIDAndName(ctx, ruleCfg.Container)
+				dstID, dstName, err := r.getContainerIDAndName(ctx, tx, ruleCfg.Container)
 				if err != nil {
 					return nil, fmt.Errorf("error getting container %q ID from database: %w", ruleCfg.Container, err)
 				}
@@ -625,16 +640,16 @@ func (r *RuleManager) createOutputRules(ctx context.Context, logger *zap.Logger,
 
 // getContainerIDAndName returns the ID and canonical name of a container
 // if it is present in the database.
-func (r *RuleManager) getContainerIDAndName(ctx context.Context, contName string) (string, string, error) {
+func (r *RuleManager) getContainerIDAndName(ctx context.Context, db database.Querier, contName string) (string, string, error) {
 	name := contName
 
-	id, err := r.db.GetContainerID(ctx, contName)
+	id, err := db.GetContainerID(ctx, contName)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			return "", "", fmt.Errorf("error getting container %q ID from database: %w", contName, err)
 		}
 
-		info, err := r.db.GetContainerIDAndNameFromAlias(ctx, contName)
+		info, err := db.GetContainerIDAndNameFromAlias(ctx, contName)
 		if err != nil {
 			return "", "", fmt.Errorf("error getting container %q ID from database: %w", contName, err)
 		}
@@ -650,7 +665,7 @@ func (r *RuleManager) getContainerIDAndName(ctx context.Context, contName string
 // from another container to this container. The other container was
 // processed before this container, so rules concerning this container
 // couldn't be created until now.
-func (r *RuleManager) createWaitingContainerRules(ctx context.Context, logger *zap.Logger, id, name, service, project string, addrs map[string][]byte, chain *nftables.Chain, estContainers map[string]struct{}) ([]*nftables.Rule, error) {
+func (r *RuleManager) createWaitingContainerRules(ctx context.Context, logger *zap.Logger, tx *database.TX, id, name, service, project string, addrs map[string][]byte, chain *nftables.Chain, estContainers map[string]struct{}) ([]*nftables.Rule, error) {
 	var (
 		waitingRules []database.GetWaitingContainerRulesRow
 		err          error
@@ -659,7 +674,7 @@ func (r *RuleManager) createWaitingContainerRules(ctx context.Context, logger *z
 	)
 
 	for _, alias := range aliases {
-		waitingRules, err = r.db.GetWaitingContainerRules(ctx, alias)
+		waitingRules, err = tx.GetWaitingContainerRules(ctx, alias)
 		if err != nil {
 			return nil, fmt.Errorf("error getting waiting container rules of %q from database: %w", alias, err)
 		}
@@ -732,7 +747,7 @@ func (r *RuleManager) createWaitingContainerRules(ctx context.Context, logger *z
 
 	// deactivate waiting container rules so these rules are not created
 	// again unless this container is restarted
-	if err := r.db.DeactivateWaitingContainerRules(ctx, foundName); err != nil {
+	if err := tx.DeactivateWaitingContainerRules(ctx, foundName); err != nil {
 		return nil, fmt.Errorf("error updating waiting container rules from database: %w", err)
 	}
 

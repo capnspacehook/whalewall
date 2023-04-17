@@ -29,7 +29,7 @@ func (r *RuleManager) syncContainers(ctx context.Context) error {
 	})
 
 	for _, c := range containers {
-		exists, err := r.containerExists(ctx, c.ID)
+		exists, err := r.containerExists(ctx, r.db, c.ID)
 		if err != nil {
 			r.logger.Error("error querying container from database", zap.String("container.id", c.ID[:12]), zap.Error(err))
 			continue
