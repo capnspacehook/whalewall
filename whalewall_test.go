@@ -10,12 +10,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/nftables"
@@ -40,7 +42,26 @@ var (
 func TestIntegration(t *testing.T) {
 	is := is.New(t)
 
-	startWhalewall(t, is)
+	checkFirewallRules := func() {
+		is.True(runCmd(t, "client", "nslookup google.com") == 0)                             // udp port 53 is allowed
+		is.True(runCmd(t, "client", "curl --connect-timeout 1 http://1.1.1.1") == 0)         // tcp port 80 to 1.1.1.1 is allowed
+		is.True(runCmd(t, "client", "curl --connect-timeout 1 http://1.0.0.1") != 0)         // tcp port 80 to 1.0.0.1 is not allowed
+		is.True(runCmd(t, "client", "curl --connect-timeout 1 https://www.google.com") == 0) // DNS and HTTPS is allowed externally
+		is.True(portOpen(t, "client", "server", 756, false))                                 // tcp port 756 is allowed client -> server
+		is.True(!portOpen(t, "client", "server", 756, true))                                 // udp port 756 is not allowed client -> server
+		is.True(!portOpen(t, "client", "server", 80, false))                                 // tcp port 80 is not allowed client -> server
+		is.True(!portOpen(t, "client", "server", 80, true))                                  // udp port 80 is not allowed client -> server
+		is.True(portOpen(t, "tester", "localhost", 8080, false))                             // tcp mapped port 8080:80 of client is allowed from localhost
+		is.True(!portOpen(t, "tester", "localhost", 8080, true))                             // udp mapped port 8080:80 of client is not allowed from localhost
+		is.True(!portOpen(t, "tester", "localhost", 8081, false))                            // tcp mapped port 8081:80 of server is not allowed from localhost
+		is.True(!portOpen(t, "tester", "localhost", 8081, true))                             // udp mapped port 8081:80 of server is not allowed from localhost
+		is.True(!portOpen(t, "tester", "localhost", 9001, false))                            // tcp mapped port 9001:9001 of server is not allowed from localhost
+		is.True(!portOpen(t, "tester", "localhost", 9001, true))                             // udp mapped port 9001:9001 of server is not allowed from localhost
+	}
+
+	tempDir := t.TempDir()
+	stopWhalewall := startWhalewall(t, is, tempDir)
+	t.Cleanup(stopWhalewall)
 
 	is.True(run(t, "docker", "compose", "-f=testdata/docker-compose.yml", "up", "-d") == 0)
 	t.Cleanup(func() {
@@ -50,41 +71,138 @@ func TestIntegration(t *testing.T) {
 	// wait until whalewall has created firewall rules
 	time.Sleep(time.Second)
 
-	is.True(runCmd(t, "client", "nslookup google.com") == 0)                             // udp port 53 is allowed
-	is.True(runCmd(t, "client", "curl --connect-timeout 1 http://1.1.1.1") == 0)         // tcp port 80 to 1.1.1.1 is allowed
-	is.True(runCmd(t, "client", "curl --connect-timeout 1 http://1.0.0.1") != 0)         // tcp port 80 to 1.0.0.1 is not allowed
-	is.True(runCmd(t, "client", "curl --connect-timeout 1 https://www.google.com") == 0) // DNS and HTTPS is allowed externally
-	is.True(portOpen(t, "client", "server", 756, false))                                 // tcp port 756 is allowed client -> server
-	is.True(!portOpen(t, "client", "server", 756, true))                                 // udp port 756 is not allowed client -> server
-	is.True(!portOpen(t, "client", "server", 80, false))                                 // tcp port 80 is not allowed client -> server
-	is.True(!portOpen(t, "client", "server", 80, true))                                  // udp port 80 is not allowed client -> server
-	is.True(portOpen(t, "tester", "localhost", 8080, false))                             // tcp mapped port 8080:80 of client is allowed from localhost
-	is.True(!portOpen(t, "tester", "localhost", 8080, true))                             // udp mapped port 8080:80 of client is not allowed from localhost
-	is.True(!portOpen(t, "tester", "localhost", 8081, false))                            // tcp mapped port 8081:80 of server is not allowed from localhost
-	is.True(!portOpen(t, "tester", "localhost", 8081, true))                             // udp mapped port 8081:80 of server is not allowed from localhost
-	is.True(!portOpen(t, "tester", "localhost", 9001, false))                            // tcp mapped port 9001:9001 of server is not allowed from localhost
-	is.True(!portOpen(t, "tester", "localhost", 9001, true))                             // udp mapped port 9001:9001 of server is not allowed from localhost
-}
+	checkFirewallRules()
 
-func startWhalewall(t *testing.T, is *is.I) {
-	switch {
-	case *binaryTests:
-		startBinary(t, is)
-	case *containerTests:
-		startContainer(t, is)
-	default:
-		startFunc(t, is)
+	// ensure correct nftables chains exist
+	dockerClient, err := client.NewClientWithOpts(client.FromEnv)
+	is.NoErr(err)
+	t.Cleanup(func() {
+		dockerClient.Close()
+	})
+	containers, err := dockerClient.ContainerList(context.Background(), types.ContainerListOptions{})
+	is.NoErr(err)
+
+	clientChain := getContainerChain("client", containers)
+	is.True(clientChain != nil)
+	serverChain := getContainerChain("server", containers)
+	is.True(serverChain != nil)
+
+	nfc, err := nftables.New()
+	is.NoErr(err)
+	chains, err := nfc.ListChains()
+	is.NoErr(err)
+
+	is.True(chainExists(clientChain.Name, chains))
+	is.True(chainExists(serverChain.Name, chains))
+
+	// test stopping and starting containers when whalewall is running
+	// and when it is stopped and started after
+	for _, restart := range []bool{false, true} {
+		name := "whalewall running"
+		if restart {
+			name = "whalewall stopped"
+		}
+		t.Run(name, func(t *testing.T) {
+			// stop server container and verify that its chain is removed
+			t.Run("stop server", func(t *testing.T) {
+				if restart {
+					stopWhalewall()
+				}
+				is.True(run(t, "docker", "compose", "-f=testdata/docker-compose.yml", "stop", "server") == 0)
+				if restart {
+					stopWhalewall = startWhalewall(t, is, tempDir)
+				}
+				time.Sleep(time.Second)
+
+				chains, err := nfc.ListChains()
+				is.NoErr(err)
+				is.True(chainExists(clientChain.Name, chains))
+				is.True(!chainExists(serverChain.Name, chains))
+			})
+
+			// stop client container and verify that its chain is removed
+			t.Run("stop client", func(t *testing.T) {
+				if restart {
+					stopWhalewall()
+				}
+				is.True(run(t, "docker", "compose", "-f=testdata/docker-compose.yml", "stop", "client") == 0)
+				if restart {
+					stopWhalewall = startWhalewall(t, is, tempDir)
+				}
+				time.Sleep(time.Second)
+
+				chains, err := nfc.ListChains()
+				is.NoErr(err)
+				is.True(!chainExists(clientChain.Name, chains))
+				is.True(!chainExists(serverChain.Name, chains))
+			})
+
+			// start client container and verify that its chain is created
+			t.Run("start client", func(t *testing.T) {
+				if restart {
+					stopWhalewall()
+				}
+				is.True(run(t, "docker", "compose", "-f=testdata/docker-compose.yml", "start", "client") == 0)
+				if restart {
+					stopWhalewall = startWhalewall(t, is, tempDir)
+				}
+				time.Sleep(time.Second)
+
+				chains, err := nfc.ListChains()
+				is.NoErr(err)
+				is.True(chainExists(clientChain.Name, chains))
+				is.True(!chainExists(serverChain.Name, chains))
+			})
+
+			// start server container and verify that its chain is created
+			t.Run("start server", func(t *testing.T) {
+				if restart {
+					stopWhalewall()
+				}
+				is.True(run(t, "docker", "compose", "-f=testdata/docker-compose.yml", "start", "server") == 0)
+				if restart {
+					stopWhalewall = startWhalewall(t, is, tempDir)
+				}
+				time.Sleep(time.Second)
+
+				chains, err := nfc.ListChains()
+				is.NoErr(err)
+				is.True(chainExists(clientChain.Name, chains))
+				is.True(chainExists(serverChain.Name, chains))
+			})
+
+			// ensure rules are created properly again after recreating containers
+			checkFirewallRules()
+		})
 	}
 }
 
-func startBinary(t *testing.T, is *is.I) {
-	wwCmd := exec.Command(*whalewallBinary, "-debug", "-d", t.TempDir())
+func startWhalewall(t *testing.T, is *is.I, tempDir string) func() {
+	var stop func()
+	var stopOnce sync.Once
+
+	switch {
+	case *binaryTests:
+		stop = startBinary(t, is, tempDir)
+	case *containerTests:
+		stop = startContainer(t, is, tempDir)
+	default:
+		stop = startFunc(is, tempDir)
+	}
+
+	return func() {
+		stopOnce.Do(stop)
+	}
+}
+
+func startBinary(t *testing.T, is *is.I, tempDir string) func() {
+	wwCmd := exec.Command(*whalewallBinary, "-debug", "-d", tempDir)
 	wwCmd.Stdout = os.Stdout
 	wwCmd.Stderr = os.Stderr
 	err := wwCmd.Start()
 	is.NoErr(err)
 
-	t.Cleanup(func() {
+	return func() {
 		err := wwCmd.Process.Signal(os.Interrupt)
 		if err != nil {
 			t.Errorf("error killing whalewall process: %v", err)
@@ -96,18 +214,20 @@ func startBinary(t *testing.T, is *is.I) {
 				t.Errorf("whalewall exited with error: %v", err)
 			}
 		}
-	})
+	}
 }
 
-func startContainer(t *testing.T, is *is.I) {
+func startContainer(t *testing.T, is *is.I, tempDir string) func() {
 	dockerCmd := exec.Command(
 		"docker",
 		"run",
 		"--cap-add=NET_ADMIN",
 		"--network=host",
+		fmt.Sprintf("-v=%s:/data", tempDir),
 		"-v=/var/run/docker.sock:/var/run/docker.sock:ro",
 		"--rm",
 		*whalewallImage,
+		"-d=/data",
 		"-debug",
 	)
 	dockerCmd.Stdout = os.Stdout
@@ -115,7 +235,7 @@ func startContainer(t *testing.T, is *is.I) {
 	err := dockerCmd.Start()
 	is.NoErr(err)
 
-	t.Cleanup(func() {
+	return func() {
 		err := dockerCmd.Process.Signal(os.Interrupt)
 		if err != nil {
 			t.Errorf("error killing whalewall container: %v", err)
@@ -127,27 +247,26 @@ func startContainer(t *testing.T, is *is.I) {
 				t.Errorf("whalewall container exited with error: %v", err)
 			}
 		}
-	})
+	}
 }
 
-func startFunc(t *testing.T, is *is.I) {
+func startFunc(is *is.I, tempDir string) func() {
 	logger, err := zap.NewDevelopment()
 	is.NoErr(err)
 
+	logger.Info("starting whalewall")
 	ctx, cancel := context.WithCancel(context.Background())
-	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	dbFile := filepath.Join(tempDir, "db.sqlite")
 	r, err := NewRuleManager(ctx, logger, dbFile, defaultTimeout)
 	is.NoErr(err)
 	err = r.Start(ctx)
 	is.NoErr(err)
-	t.Cleanup(func() {
-		err = r.clearRules(ctx)
-		if err != nil {
-			t.Logf("error cleaning rules: %v", err)
-		}
+
+	return func() {
+		logger.Info("stopping whalewall")
 		cancel()
 		r.Stop()
-	})
+	}
 }
 
 func portOpen(t *testing.T, container, host string, port uint16, udp bool) bool {
@@ -193,6 +312,27 @@ func run(t *testing.T, args ...string) int {
 	}
 
 	return 0
+}
+
+func getContainerChain(name string, containers []types.Container) *nftables.Chain {
+	for _, container := range containers {
+		if slices.ContainsFunc(container.Names, func(n string) bool {
+			return stripName(n) == name
+		}) {
+			return &nftables.Chain{
+				Name:  buildChainName(name, container.ID),
+				Table: filterTable,
+			}
+		}
+	}
+
+	return nil
+}
+
+func chainExists(name string, chains []*nftables.Chain) bool {
+	return slices.ContainsFunc(chains, func(c *nftables.Chain) bool {
+		return c.Name == name
+	})
 }
 
 var (

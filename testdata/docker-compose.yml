@@ -1,6 +1,7 @@
 version: "3"
 services:
   client:
+    container_name: client
     command: "80"
     image: ghcr.io/capnspacehook/eavesdropper
     labels:
@@ -25,6 +26,7 @@ services:
       - "8080:80"
 
   server:
+    container_name: server
     command: "80 756 9001"
     depends_on:
       - client

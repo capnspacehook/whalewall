@@ -13,8 +13,7 @@ on:
 jobs:
   race-test:
     # required for nftables to work correctly
-    # TODO: change to "ubuntu-latest" when 22.04 is the latest
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout code
@@ -39,7 +38,7 @@ jobs:
           sudo ./whalewall.test -test.timeout 5m -test.v
 
   binary-test:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout code
@@ -57,17 +56,17 @@ jobs:
           check-latest: true
           cache: true
 
-      # run the same tests as above but use a binary to create rules
+      # run the integration tests but use a binary to create rules
       # to test with landlock and seccomp filters active
       - run: |
           cd cmd/whalewall
           CGO_ENABLED=0 go build -o ../../whalewall
           cd ../../
           go test -c -o whalewall.test
-          sudo ./whalewall.test -binary-tests -test.timeout 5m -test.v
+          sudo ./whalewall.test -binary-tests -test.run Integration -test.timeout 5m -test.v
 
   image-test:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout code
@@ -95,8 +94,8 @@ jobs:
           check-latest: true
           cache: true
 
-      # run the same tests as above but use a container to create rules
+      # run the integration tests but use a container to create rules
       # to test with landlock and seccomp filters active
       - run: |
           go test -c -o whalewall.test
-          sudo ./whalewall.test -container-tests -test.timeout 5m -test.v
+          sudo ./whalewall.test -container-tests -test.run Integration -test.timeout 5m -test.v
