@@ -40,12 +40,12 @@ var (
 func TestIntegration(t *testing.T) {
 	is := is.New(t)
 
+	startWhalewall(t, is)
+
 	is.True(run(t, "docker", "compose", "-f=testdata/docker-compose.yml", "up", "-d") == 0)
 	t.Cleanup(func() {
 		run(t, "docker", "compose", "-f=testdata/docker-compose.yml", "down")
 	})
-
-	startWhalewall(t, is)
 
 	// wait until whalewall has created firewall rules
 	time.Sleep(time.Second)

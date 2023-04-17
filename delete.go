@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"syscall"
 
 	"github.com/docker/docker/client"
 	"github.com/google/nftables"
@@ -64,7 +65,7 @@ func (r *RuleManager) clearRules(ctx context.Context) error {
 				r.logger.Error("error deleting rule", zap.Error(err))
 				continue
 			}
-			if err := ignoringENOENT(nfc.Flush); err != nil {
+			if err := ignoringErr(nfc.Flush, syscall.ENOENT); err != nil {
 				r.logger.Error("error deleting rule from chain", zap.String("chain.name", chainName), zap.Error(err))
 			}
 		}
@@ -72,13 +73,13 @@ func (r *RuleManager) clearRules(ctx context.Context) error {
 
 	// delete whalewall chain
 	nfc.DelChain(whalewallChain)
-	if err := ignoringENOENT(nfc.Flush); err != nil {
+	if err := ignoringErr(nfc.Flush, syscall.ENOENT); err != nil {
 		return fmt.Errorf("error deleting chain %q: %w", whalewallChainName, err)
 	}
 
 	// delete container address set
 	nfc.DelSet(containerAddrSet)
-	if err := ignoringENOENT(nfc.Flush); err != nil {
+	if err := ignoringErr(nfc.Flush, syscall.ENOENT); err != nil {
 		return fmt.Errorf("error deleting set %q: %w", containerAddrSetName, err)
 	}
 
@@ -189,7 +190,7 @@ func (r *RuleManager) deleteContainerRules(ctx context.Context, id, name string)
 		}
 		// flush after every element deletion to ensure all possible
 		// elements are deleted
-		if err := ignoringENOENT(nfc.Flush); err != nil {
+		if err := ignoringErr(nfc.Flush, syscall.ENOENT); err != nil {
 			logger.Error("error deleting set element", zap.Error(err))
 		}
 	}
@@ -219,7 +220,7 @@ func (r *RuleManager) deleteContainerRules(ctx context.Context, id, name string)
 		Table: filterTable,
 		Name:  chainName,
 	})
-	if err := ignoringENOENT(nfc.Flush); err != nil {
+	if err := ignoringErr(nfc.Flush, syscall.ENOENT); err != nil {
 		logger.Error("error deleting chain", zap.String("chain.name", chainName), zap.Error(err))
 	}
 
@@ -246,7 +247,7 @@ func deleteRulesFromContainer(logger *zap.Logger, nfc firewallClient, rules []*n
 		}
 		// flush after every rule deletion to ensure all possible
 		// rules are deleted
-		if err := ignoringENOENT(nfc.Flush); err != nil {
+		if err := ignoringErr(nfc.Flush, syscall.ENOENT); err != nil {
 			logger.Error("error deleting rule", zap.Error(err))
 		}
 	}
