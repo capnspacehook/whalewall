@@ -152,7 +152,42 @@ func (m *mockFirewall) SetAddElements(s *nftables.Set, vals []nftables.SetElemen
 		m.flushErr = syscall.ENOENT
 		return nil
 	}
-	elements = append(elements, vals...)
+
+	// don't add elements already present in set
+	for _, val := range vals {
+		if !slices.ContainsFunc(elements, func(e nftables.SetElement) bool {
+			if !bytes.Equal(e.Key, val.Key) {
+				return false
+			}
+			if !bytes.Equal(e.Val, val.Val) {
+				return false
+			}
+			if !bytes.Equal(e.KeyEnd, val.KeyEnd) {
+				return false
+			}
+			if e.IntervalEnd != val.IntervalEnd {
+				return false
+			}
+			if (e.VerdictData != nil) != (val.VerdictData != nil) {
+				return false
+			}
+			if e.VerdictData != nil {
+				if e.VerdictData.Kind != val.VerdictData.Kind {
+					return false
+				}
+				if e.VerdictData.Chain != val.VerdictData.Chain {
+					return false
+				}
+			}
+			if e.Timeout != val.Timeout {
+				return false
+			}
+			return true
+		}) {
+			elements = append(elements, val)
+		}
+	}
+
 	t.sets[s.Name] = elements
 	m.tables[s.Table.Name] = t
 

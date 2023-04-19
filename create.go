@@ -58,11 +58,11 @@ var (
 
 // createRules adds nftables rules for started containers.
 func (r *RuleManager) createRules(ctx context.Context) {
-	for container := range r.createCh {
-		if err := r.createContainerRules(ctx, container); err != nil {
+	for c := range r.createCh {
+		if err := r.createContainerRules(ctx, c.container, c.isNew); err != nil {
 			r.logger.Error("error creating rules",
-				zap.String("container.id", container.ID[:12]),
-				zap.String("container.name", stripName(container.Name)),
+				zap.String("container.id", c.container.ID[:12]),
+				zap.String("container.name", stripName(c.container.Name)),
 				zap.Error(err),
 			)
 		}
@@ -70,10 +70,13 @@ func (r *RuleManager) createRules(ctx context.Context) {
 }
 
 // createContainerRules adds nftables rules for a container.
-func (r *RuleManager) createContainerRules(ctx context.Context, container types.ContainerJSON) error {
+// TODO: when container isn't new, remove any rules not created by whalewall
+// TODO: if the container dies while rules are still being created, stop
+// creating rules and remove whatever was created
+func (r *RuleManager) createContainerRules(ctx context.Context, container types.ContainerJSON, isNew bool) error {
 	contName := stripName(container.Name)
 	logger := r.logger.With(zap.String("container.id", container.ID[:12]), zap.String("container.name", contName))
-	logger.Info("creating rules")
+	logger.Info("creating rules", zap.Bool("container.is_new", isNew))
 
 	// check that network settings are valid
 	if container.NetworkSettings == nil {
@@ -124,7 +127,7 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 		Type:  nftables.ChainTypeFilter,
 	}
 	nfc.AddChain(chain)
-	if err := nfc.Flush(); err != nil {
+	if err := ignoringErr(nfc.Flush, syscall.EEXIST); err != nil {
 		return fmt.Errorf("error creating chain: %w", err)
 	}
 
@@ -147,18 +150,50 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 		return fmt.Errorf("error adding element to container address set: %w", err)
 	}
 
-	// create rule to drop all not explicitly allowed traffic
-	nfc.AddRule(createDropRule(chain, container.ID))
-	if err := nfc.Flush(); err != nil {
-		return fmt.Errorf("error creating drop rule: %w", err)
+	createRules := func(rules []*nftables.Rule, insert bool) error {
+		// ensure we aren't creating existing rules
+		currentRules := make(map[string][]*nftables.Rule)
+		for _, rule := range rules {
+			if _, ok := currentRules[rule.Chain.Name]; ok {
+				continue
+			}
+
+			curRules, err := nfc.GetRules(filterTable, rule.Chain)
+			if err != nil {
+				return fmt.Errorf("error getting rules of chain %q: %w", rule.Chain.Name, err)
+			}
+			currentRules[rule.Chain.Name] = curRules
+		}
+
+		j := 0
+		for _, rule := range rules {
+			// keep rules that don't already exist, discard the rest
+			if findRule(logger, rule, currentRules[rule.Chain.Name]) {
+				continue
+			}
+			rules[j] = rule
+			j++
+		}
+		rules = rules[:j]
+
+		if insert {
+			// insert rules in reverse order that they were created in to maintain order
+			for i := len(rules) - 1; i >= 0; i-- {
+				nfc.InsertRule(rules[i])
+			}
+		} else {
+			for _, rule := range rules {
+				nfc.AddRule(rule)
+			}
+		}
+
+		return nfc.Flush()
 	}
 
-	createRules := func(rules []*nftables.Rule) error {
-		// insert rules in reverse order that they were created in to maintain order
-		for i := len(rules) - 1; i >= 0; i-- {
-			nfc.InsertRule(rules[i])
-		}
-		return nfc.Flush()
+	// create rule to drop all not explicitly allowed traffic
+	err = createRules([]*nftables.Rule{createDropRule(chain, container.ID)}, false)
+	if err != nil {
+		return fmt.Errorf("error creating drop rule: %w", err)
 	}
 
 	// add container to database
@@ -168,12 +203,14 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 	}
 	defer tx.Rollback()
 
-	err = tx.AddContainer(ctx, database.AddContainerParams{
-		ID:   container.ID,
-		Name: contName,
-	})
-	if err != nil {
-		return fmt.Errorf("error adding container to database: %w", err)
+	if isNew {
+		err := tx.AddContainer(ctx, database.AddContainerParams{
+			ID:   container.ID,
+			Name: contName,
+		})
+		if err != nil {
+			return fmt.Errorf("error adding container to database: %w", err)
+		}
 	}
 
 	project := container.Config.Labels[composeProjectLabel]
@@ -191,7 +228,7 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 	if err != nil {
 		return fmt.Errorf("error creating waiting output rules: %w", err)
 	}
-	if err := createRules(waitingRules); err != nil {
+	if err := createRules(waitingRules, true); err != nil {
 		logger.Error("error creating waiting rules", zap.Error(err))
 	}
 
@@ -203,7 +240,7 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 		if err != nil {
 			return fmt.Errorf("error creating output rules: %w", err)
 		}
-		if err := createRules(outputRules); err != nil {
+		if err := createRules(outputRules, true); err != nil {
 			logger.Error("error creating output rules", zap.Error(err))
 		}
 
@@ -212,25 +249,13 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 		if err != nil {
 			return fmt.Errorf("error creating port mapping rules: %w", err)
 		}
-		// ensure we aren't creating existing rules
-		curRules, err := nfc.GetRules(filterTable, whalewallChain)
-		if err != nil {
-			return fmt.Errorf("error getting rules of %q: %w", whalewallChainName, err)
-		}
-		j := 0
-		for i := range portMapRules {
-			if portMapRules[i].Chain.Name == whalewallChainName {
-				if findRule(logger, portMapRules[i], curRules) {
-					continue
-				}
-			}
-			portMapRules[j] = portMapRules[i]
-			j++
-		}
-		portMapRules = portMapRules[:j]
-		if err := createRules(portMapRules); err != nil {
+		if err := createRules(portMapRules, true); err != nil {
 			logger.Error("error creating mapped port rules", zap.Error(err))
 		}
+	}
+
+	if !isNew {
+		return nil
 	}
 
 	logger.Debug("adding to database")

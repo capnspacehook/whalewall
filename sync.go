@@ -29,31 +29,39 @@ func (r *RuleManager) syncContainers(ctx context.Context) error {
 	})
 
 	for _, c := range containers {
-		exists, err := r.containerExists(ctx, r.db, c.ID)
+		truncID := c.ID[:12]
+		container, err := r.dockerCli.ContainerInspect(ctx, c.ID)
 		if err != nil {
-			r.logger.Error("error querying container from database", zap.String("container.id", c.ID[:12]), zap.Error(err))
-			continue
-		}
-		if exists {
-			// we are aware of container and have created rules for it
-			// TODO: should rules still try and be created, but container
-			// not added to DB just in case some were deleted?
+			r.logger.Error("error inspecting container", zap.String("container.id", truncID), zap.Error(err))
 			continue
 		}
 
-		container, err := r.dockerCli.ContainerInspect(ctx, c.ID)
+		exists, err := r.containerExists(ctx, r.db, c.ID)
 		if err != nil {
-			r.logger.Error("error inspecting container", zap.String("container.id", c.ID[:12]), zap.Error(err))
+			r.logger.Error("error querying container from database", zap.String("container.id", truncID), zap.Error(err))
+			continue
+		}
+		if exists {
+			// we are aware of the container and have created rules for
+			// it before, but the rules could have been deleted since
+			// then so recreate any missing rules
+			r.createCh <- containerDetails{
+				container: container,
+				isNew:     false,
+			}
 			continue
 		}
 
 		enabled, err := whalewallEnabled(container.Config.Labels)
 		if err != nil {
-			r.logger.Error("error parsing label", zap.String("container.id", c.ID[:12]), zap.String("label", enabledLabel), zap.Error(err))
+			r.logger.Error("error parsing label", zap.String("container.id", truncID), zap.String("label", enabledLabel), zap.Error(err))
 			continue
 		}
 		if enabled {
-			r.createCh <- container
+			r.createCh <- containerDetails{
+				container: container,
+				isNew:     true,
+			}
 		}
 	}
 
