@@ -13,7 +13,7 @@ require (
 	golang.org/x/sys v0.7.0
 	gopkg.in/yaml.v3 v3.0.1
 	gvisor.dev/gvisor v0.0.0-20221108212141-79965837f088
-	modernc.org/sqlite v1.21.1
+	modernc.org/sqlite v1.21.2
 )
 
 // Test dependencies
@@ -26,7 +26,7 @@ require (
 	github.com/Microsoft/go-winio v0.5.1 // indirect
 	github.com/docker/distribution v2.8.1+incompatible // indirect
 	github.com/docker/go-units v0.4.0 // indirect
-	github.com/dustin/go-humanize v1.0.0 // indirect
+	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/uuid v1.3.0 // indirect
 	github.com/josharian/native v1.0.0 // indirect
@@ -55,7 +55,7 @@ require (
 	lukechampine.com/uint128 v1.2.0 // indirect
 	modernc.org/cc/v3 v3.40.0 // indirect
 	modernc.org/ccgo/v3 v3.16.13 // indirect
-	modernc.org/libc v1.22.3 // indirect
+	modernc.org/libc v1.22.4 // indirect
 	modernc.org/mathutil v1.5.0 // indirect
 	modernc.org/memory v1.5.0 // indirect
 	modernc.org/opt v0.1.3 // indirect
