@@ -108,14 +108,13 @@ func (r *RuleManager) cleanupRules(ctx context.Context) error {
 						zap.Error(err),
 					)
 				}
-				continue
 			} else {
 				r.logger.Error("error inspecting container", zap.String("container.id", truncID), zap.Error(err))
-				continue
 			}
+			continue
 		}
+		contName := stripName(container.Name)
 		if !c.State.Running {
-			contName := stripName(container.Name)
 			r.logger.Info("cleaning rules of stopped container", zap.String("container.id", truncID), zap.String("container.name", contName))
 			if err := r.deleteContainerRules(ctx, container.ID, contName); err != nil {
 				r.logger.Error("error deleting rules",
@@ -124,6 +123,8 @@ func (r *RuleManager) cleanupRules(ctx context.Context) error {
 					zap.Error(err),
 				)
 			}
+		} else {
+			r.logger.Debug("not cleaning rules of running container", zap.String("container.id", truncID), zap.String("container.name", contName))
 		}
 	}
 
@@ -139,6 +140,7 @@ func (r *RuleManager) deleteRules(ctx context.Context) {
 			if errors.Is(err, sql.ErrNoRows) {
 				// container is not in database, most likely an error was
 				// encountered when creating rules for it
+				r.logger.Info("not deleting container that isn't in database", zap.String("container.id", truncID))
 				continue
 			}
 			r.logger.Error("error getting name of container", zap.String("container.id", truncID), zap.Error(err))

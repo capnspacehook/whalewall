@@ -51,7 +51,7 @@ type RuleManager struct {
 	newDockerClient   dockerClientCreator
 	newFirewallClient firewallClientCreator
 
-	createCh chan types.ContainerJSON
+	createCh chan containerDetails
 	deleteCh chan string
 
 	db        *database.DB
@@ -61,6 +61,11 @@ type RuleManager struct {
 type dockerClientCreator func() (dockerClient, error)
 
 type firewallClientCreator func() (firewallClient, error)
+
+type containerDetails struct {
+	container types.ContainerJSON
+	isNew     bool
+}
 
 func NewRuleManager(ctx context.Context, logger *zap.Logger, dbFile string, timeout time.Duration) (*RuleManager, error) {
 	r := RuleManager{
@@ -109,7 +114,7 @@ func (r *RuleManager) Start(ctx context.Context) error {
 		r.logger.Error("error cleaning up rules", zap.Error(err))
 	}
 
-	r.createCh = make(chan types.ContainerJSON)
+	r.createCh = make(chan containerDetails)
 	r.deleteCh = make(chan string)
 
 	r.wg.Add(2)
@@ -150,7 +155,10 @@ func (r *RuleManager) Start(ctx context.Context) error {
 							r.logger.Error("error inspecting container", zap.String("container.id", msg.ID), zap.Error(err))
 							continue
 						}
-						r.createCh <- container
+						r.createCh <- containerDetails{
+							container: container,
+							isNew:     true,
+						}
 					}
 					if msg.Action == "die" {
 						r.deleteCh <- msg.ID

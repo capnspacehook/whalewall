@@ -119,6 +119,7 @@ VALUES
 		?,
 		TRUE
 	)
+ON CONFLICT(src_container_id, dst_container_name, rule) DO NOTHING
 `
 
 type AddWaitingContainerRuleParams struct {

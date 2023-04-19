@@ -1825,22 +1825,26 @@ mapped_ports:
 				is.NoErr(err)
 			})
 
-			// create rules
-			for _, c := range tt.containers {
-				if !allContainersStarted {
-					dockerCli.containers = append(dockerCli.containers, c)
+			// create new rules for containers then attempt to recreate
+			// rules and verify no new rules were added
+			for _, containerIsNew := range []bool{true, false} {
+				// create rules
+				for _, c := range tt.containers {
+					if !allContainersStarted {
+						dockerCli.containers = append(dockerCli.containers, c)
+					}
+
+					err := r.createContainerRules(context.Background(), c, containerIsNew)
+					is.NoErr(err)
 				}
 
-				err := r.createContainerRules(context.Background(), c)
-				is.NoErr(err)
-			}
+				// check that created rules are what is expected
+				for chain, expectedRules := range tt.expectedRules {
+					rules, err := mfc.GetRules(chain.Table, chain)
+					is.NoErr(err)
 
-			// check that created rules are what is expected
-			for chain, expectedRules := range tt.expectedRules {
-				rules, err := mfc.GetRules(chain.Table, chain)
-				is.NoErr(err)
-
-				compareRules(t, comparer, chain.Name, expectedRules, rules)
+					compareRules(t, comparer, chain.Name, expectedRules, rules)
+				}
 			}
 
 			if clearRules {
@@ -1989,7 +1993,7 @@ output:
 	// create rules
 	for _, c := range containers {
 		dockerCli.containers = append(dockerCli.containers, c)
-		err := r.createContainerRules(context.Background(), c)
+		err := r.createContainerRules(context.Background(), c, true)
 		is.NoErr(err)
 	}
 
@@ -2022,7 +2026,7 @@ output:
 	is.True(len(rulesAfterDeletion) == 1)
 
 	// recreate rules for container 2
-	err = r.createContainerRules(context.Background(), containers[1])
+	err = r.createContainerRules(context.Background(), containers[1], true)
 	is.NoErr(err)
 
 	// ensure rules of both containers are the same as before

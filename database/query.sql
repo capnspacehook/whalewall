@@ -57,7 +57,8 @@ VALUES
 		?,
 		?,
 		TRUE
-	);
+	)
+ON CONFLICT(src_container_id, dst_container_name, rule) DO NOTHING;
 
 -- name: ContainerExists :one
 SELECT
