@@ -22,7 +22,7 @@ func (r *RuleManager) containerExists(ctx context.Context, db database.Querier, 
 	return exists == 1, nil
 }
 
-func (r *RuleManager) addContainer(ctx context.Context, tx *database.TX, id, name, service string, addrs map[string][]byte, estContainers map[string]struct{}) error {
+func (r *RuleManager) addContainer(ctx context.Context, tx database.TX, id, name, service string, addrs map[string][]byte, estContainers map[string]struct{}) error {
 	for _, addr := range addrs {
 		err := tx.AddContainerAddr(ctx, database.AddContainerAddrParams{
 			Addr:        addr,
@@ -70,7 +70,7 @@ func containerAliases(name, service string) []string {
 	return aliases
 }
 
-func (r *RuleManager) deleteContainer(ctx context.Context, tx *database.TX, id, name string) error {
+func (r *RuleManager) deleteContainer(ctx context.Context, tx database.TX, id, name string) error {
 	if err := tx.DeleteContainerAddrs(ctx, id); err != nil {
 		return fmt.Errorf("error deleting container addrs in database: %w", err)
 	}

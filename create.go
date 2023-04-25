@@ -73,7 +73,10 @@ func (r *RuleManager) createRules(ctx context.Context) {
 // TODO: when container isn't new, remove any rules not created by whalewall
 // TODO: if the container dies while rules are still being created, stop
 // creating rules and remove whatever was created
-func (r *RuleManager) createContainerRules(ctx context.Context, container types.ContainerJSON, isNew bool) error {
+func (r *RuleManager) createContainerRules(ctx context.Context, container types.ContainerJSON, isNew bool) (retErr error) {
+	ctx, cleanup := r.containerTracker.StartCreatingContainer(ctx, container.ID)
+	defer cleanup()
+
 	contName := stripName(container.Name)
 	logger := r.logger.With(zap.String("container.id", container.ID[:12]), zap.String("container.name", contName))
 	logger.Info("creating rules", zap.Bool("container.is_new", isNew))
@@ -147,10 +150,54 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 		return fmt.Errorf("error marshaling set elements: %w", err)
 	}
 	if err := ignoringErr(nfc.Flush, syscall.EEXIST); err != nil {
-		return fmt.Errorf("error adding element to container address set: %w", err)
+		return fmt.Errorf("error adding elements to container address set: %w", err)
 	}
 
+	// cleanup created rules if the context was canceled
+	var createdRules []*nftables.Rule
+	defer func() {
+		if retErr == nil {
+			return
+		} else if !errors.Is(retErr, context.Canceled) {
+			return
+		}
+		// if we are shutting down, don't delete rules
+		select {
+		case <-r.stopping:
+			return
+		default:
+		}
+
+		logger.Info("rule creation canceled, deleting created rules")
+		if err := nfc.SetDeleteElements(containerAddrSet, addrElems); err != nil {
+			logger.Error("error marshaling set elements", zap.Error(err))
+		}
+		if err := ignoringErr(nfc.Flush, syscall.ENOENT); err != nil {
+			logger.Error("error deleting elements to container address set", zap.Error(err))
+		}
+		for _, rule := range createdRules {
+			if rule.Chain.Name == chain.Name {
+				continue
+			}
+			if err := nfc.DelRule(rule); err != nil {
+				logger.Error("error deleting rule", zap.Error(err))
+				continue
+			}
+			if err := ignoringErr(nfc.Flush, syscall.ENOENT); err != nil {
+				logger.Error("error deleting rule", zap.Error(err))
+			}
+		}
+		nfc.DelChain(chain)
+		if err := ignoringErr(nfc.Flush, syscall.ENOENT); err != nil {
+			logger.Error("error deleting chain", zap.String("chain.name", chain.Name), zap.Error(err))
+		}
+	}()
+
 	createRules := func(rules []*nftables.Rule, insert bool) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		// ensure we aren't creating existing rules
 		currentRules := make(map[string][]*nftables.Rule)
 		for _, rule := range rules {
@@ -180,6 +227,7 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 			// insert rules in reverse order that they were created in to maintain order
 			for i := len(rules) - 1; i >= 0; i-- {
 				nfc.InsertRule(rules[i])
+				createdRules = append(createdRules, rules[i])
 			}
 		} else {
 			for _, rule := range rules {
@@ -260,7 +308,11 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 
 	logger.Debug("adding to database")
 
-	return r.addContainer(ctx, tx, container.ID, contName, service, addrs, estContainers)
+	if err := r.addContainer(ctx, tx, container.ID, contName, service, addrs, estContainers); err != nil {
+		return fmt.Errorf("error adding container information to database: %w", err)
+	}
+
+	return nil
 }
 
 // stripName removes the leading "/" from a container name if necessary.
@@ -273,7 +325,7 @@ func stripName(name string) string {
 
 // populateOutputRules attempts to find the IPs of containers specified
 // in output rules and fills the rules appropriately.
-func (r *RuleManager) populateOutputRules(ctx context.Context, tx *database.TX, cfg config, id, project string, addrs map[string][]byte, estConts map[string]struct{}) error {
+func (r *RuleManager) populateOutputRules(ctx context.Context, tx database.TX, cfg config, id, project string, addrs map[string][]byte, estConts map[string]struct{}) error {
 	// only get a list of containers if at least one rule specifies a
 	// container
 	i := slices.IndexFunc(cfg.Output, func(r ruleConfig) bool {
@@ -606,7 +658,7 @@ func (r *RuleManager) createPortMappingRules(logger *zap.Logger, container types
 
 // createOutputRules adds nftables rules to allow outbound access from
 // a container.
-func (r *RuleManager) createOutputRules(ctx context.Context, logger *zap.Logger, tx *database.TX, ruleCfgs []ruleConfig, project string, addrs map[string][]byte, chain *nftables.Chain, name, id string) ([]*nftables.Rule, error) {
+func (r *RuleManager) createOutputRules(ctx context.Context, logger *zap.Logger, tx database.TX, ruleCfgs []ruleConfig, project string, addrs map[string][]byte, chain *nftables.Chain, name, id string) ([]*nftables.Rule, error) {
 	nftRules := make([]*nftables.Rule, 0, len(ruleCfgs)*3)
 	for _, ruleCfg := range ruleCfgs {
 		// prepend container name and ID to log prefixes
@@ -691,7 +743,7 @@ func (r *RuleManager) getContainerIDAndName(ctx context.Context, db database.Que
 // from another container to this container. The other container was
 // processed before this container, so rules concerning this container
 // couldn't be created until now.
-func (r *RuleManager) createWaitingContainerRules(ctx context.Context, logger *zap.Logger, tx *database.TX, id, name, service, project string, addrs map[string][]byte, chain *nftables.Chain, estContainers map[string]struct{}) ([]*nftables.Rule, error) {
+func (r *RuleManager) createWaitingContainerRules(ctx context.Context, logger *zap.Logger, tx database.TX, id, name, service, project string, addrs map[string][]byte, chain *nftables.Chain, estContainers map[string]struct{}) ([]*nftables.Rule, error) {
 	var (
 		waitingRules []database.GetWaitingContainerRulesRow
 		err          error

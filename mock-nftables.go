@@ -289,9 +289,7 @@ func (m *mockFirewall) InsertRule(r *nftables.Rule) *nftables.Rule {
 func (m *mockFirewall) GetRules(t *nftables.Table, c *nftables.Chain) ([]*nftables.Rule, error) {
 	ch, ok := m.chains[c.Name]
 	if !ok {
-		m.logger.Errorf("chain %q not found", c.Name)
-		m.flushErr = syscall.ENOENT
-		return nil, nil
+		return nil, syscall.ENOENT
 	}
 
 	return slices.Clone(ch.rules), nil
