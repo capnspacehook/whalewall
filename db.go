@@ -10,24 +10,16 @@ import (
 //go:generate sqlc generate
 
 func (r *RuleManager) containerExists(ctx context.Context, db database.Querier, id string) (bool, error) {
-	e, err := db.ContainerExists(ctx, id)
+	exists, err := db.ContainerExists(ctx, id)
 	if err != nil {
 		return false, err
 	}
-	exists, ok := e.(int64)
-	if !ok {
-		return false, fmt.Errorf("got unexpected type from SQL query: %T", e)
-	}
-
 	return exists == 1, nil
 }
 
 func (r *RuleManager) addContainer(ctx context.Context, tx *database.TX, id, name, service string, addrs map[string][]byte, estContainers map[string]struct{}) error {
 	for _, addr := range addrs {
-		err := tx.AddContainerAddr(ctx, database.AddContainerAddrParams{
-			Addr:        addr,
-			ContainerID: id,
-		})
+		err := tx.AddContainerAddr(ctx, addr, id)
 		if err != nil {
 			return fmt.Errorf("error adding container addr to database: %w", err)
 		}
@@ -37,10 +29,7 @@ func (r *RuleManager) addContainer(ctx context.Context, tx *database.TX, id, nam
 	// so when creating rules that specify this container it can be found
 	aliases := containerAliases(name, service)
 	for _, alias := range aliases {
-		err := tx.AddContainerAlias(ctx, database.AddContainerAliasParams{
-			ContainerID:    id,
-			ContainerAlias: alias,
-		})
+		err := tx.AddContainerAlias(ctx, id, alias)
 		if err != nil {
 			return fmt.Errorf("error adding container alias to database: %w", err)
 		}
@@ -49,10 +38,7 @@ func (r *RuleManager) addContainer(ctx context.Context, tx *database.TX, id, nam
 	// keep track if rules were put into other container's chains so
 	// they can be cleaned up when this container is stopped
 	for estContainer := range estContainers {
-		err := tx.AddEstContainer(ctx, database.AddEstContainerParams{
-			SrcContainerID: id,
-			DstContainerID: estContainer,
-		})
+		err := tx.AddEstContainer(ctx, id, estContainer)
 		if err != nil {
 			return fmt.Errorf("error adding established container to database: %w", err)
 		}
@@ -77,10 +63,7 @@ func (r *RuleManager) deleteContainer(ctx context.Context, tx *database.TX, id, 
 	if err := tx.DeleteContainerAliases(ctx, id); err != nil {
 		return fmt.Errorf("error deleting container aliases in database: %w", err)
 	}
-	if err := tx.DeleteEstContainers(ctx, database.DeleteEstContainersParams{
-		SrcContainerID: id,
-		DstContainerID: id,
-	}); err != nil {
+	if err := tx.DeleteEstContainers(ctx, id, id); err != nil {
 		return fmt.Errorf("error deleting established container in database: %w", err)
 	}
 	// delete waiting container rules that this container created

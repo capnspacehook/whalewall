@@ -9,3 +9,4 @@ sql:
         out: "database"
         emit_interface: true
         emit_prepared_queries: true
+        query_parameter_limit: 2

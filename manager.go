@@ -258,11 +258,7 @@ func (r *RuleManager) initDB(ctx context.Context, dbFile string) error {
 		}
 		defer tx.Rollback()
 
-		err = tx.AddContainer(ctx, database.AddContainerParams{
-			ID:   dummyID,
-			Name: dummyName,
-		})
-		if err != nil {
+		if err = tx.AddContainer(ctx, dummyID, dummyName); err != nil {
 			return fmt.Errorf("error adding container to database: %w", err)
 		}
 		err = tx.DeleteContainer(ctx, dummyID)
