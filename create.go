@@ -204,11 +204,7 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 	defer tx.Rollback()
 
 	if isNew {
-		err := tx.AddContainer(ctx, database.AddContainerParams{
-			ID:   container.ID,
-			Name: contName,
-		})
-		if err != nil {
+		if err := tx.AddContainer(ctx, container.ID, contName); err != nil {
 			return fmt.Errorf("error adding container to database: %w", err)
 		}
 	}
