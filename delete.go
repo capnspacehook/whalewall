@@ -161,6 +161,13 @@ func (r *RuleManager) deleteRules(ctx context.Context) {
 // deleteContainerRules removes all nftables rules for a container.
 func (r *RuleManager) deleteContainerRules(ctx context.Context, id, name string) error {
 	logger := r.logger.With(zap.String("container.id", id[:12]), zap.String("container.name", name))
+	ctx, cleanup, ok := r.containerTracker.StartDeletingContainer(ctx, id)
+	if !ok {
+		logger.Info("container creation canceled, skipping deletion")
+		return nil
+	}
+	defer cleanup()
+
 	nfc, err := r.newFirewallClient()
 	if err != nil {
 		return fmt.Errorf("error creating netlink connection: %w", err)

@@ -11,9 +11,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/capnspacehook/whalewall/database"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
@@ -1797,9 +1799,9 @@ mapped_ports:
 			} else {
 				dockerCli = newMockDockerClient(nil)
 			}
-			r.setDockerClientCreator(func() (dockerClient, error) {
+			r.newDockerClient = func() (dockerClient, error) {
 				return dockerCli, nil
-			})
+			}
 
 			// create mock nftables client and add required prerequisite
 			// DOCKER-USER chain
@@ -1811,9 +1813,9 @@ mapped_ports:
 				Type:  nftables.ChainTypeFilter,
 			})
 			is.NoErr(mfc.Flush())
-			r.setFirewallClientCreator(func() (firewallClient, error) {
+			r.newFirewallClient = func() (firewallClient, error) {
 				return mfc, nil
-			})
+			}
 
 			// create new database and base rules
 			err = r.init(context.Background())
@@ -1875,9 +1877,8 @@ mapped_ports:
 						Name:  buildChainName(contName, c.ID),
 						Table: filterTable,
 					}
-					rules, err := checkMfc.GetRules(filterTable, chain)
-					is.NoErr(err)
-					is.True(len(rules) == 0)
+					_, err = checkMfc.GetRules(filterTable, chain)
+					is.True(errors.Is(err, syscall.ENOENT))
 				}
 				is.True(len(mfc.tables[filterTableName].sets[containerAddrSetName]) == 0)
 			}
@@ -1962,9 +1963,9 @@ output:
 	is.NoErr(err)
 
 	dockerCli := newMockDockerClient(nil)
-	r.setDockerClientCreator(func() (dockerClient, error) {
+	r.newDockerClient = func() (dockerClient, error) {
 		return dockerCli, nil
-	})
+	}
 
 	// create mock nftables client and add required prerequisite
 	// DOCKER-USER chain
@@ -1976,9 +1977,9 @@ output:
 		Type:  nftables.ChainTypeFilter,
 	})
 	is.NoErr(mfc.Flush())
-	r.setFirewallClientCreator(func() (firewallClient, error) {
+	r.newFirewallClient = func() (firewallClient, error) {
 		return mfc, nil
-	})
+	}
 
 	// create new database and base rules
 	err = r.init(context.Background())
@@ -2037,6 +2038,181 @@ output:
 
 	compareRules(t, comparer, cont1ChainName, cont1RulesBefore, cont1RulesAfter)
 	compareRules(t, comparer, cont2ChainName, cont2RulesBefore, cont2RulesAfter)
+}
+
+type dbOnCommit struct {
+	database.DB
+	onCommit func(database.TX) error
+}
+
+func (d *dbOnCommit) Begin(ctx context.Context, logger *zap.Logger) (database.TX, error) {
+	tx, err := d.DB.Begin(ctx, logger)
+	if err != nil {
+		return nil, err
+	}
+	return &txOnCommit{
+		TX:       tx,
+		onCommit: d.onCommit,
+	}, nil
+}
+
+type txOnCommit struct {
+	database.TX
+	onCommit func(database.TX) error
+}
+
+func (t *txOnCommit) Commit() error {
+	return t.onCommit(t.TX)
+}
+
+func TestCancelingCreation(t *testing.T) {
+	container := types.ContainerJSON{
+		ContainerJSONBase: &types.ContainerJSONBase{
+			ID:   cont1ID,
+			Name: "/" + cont1Name,
+		},
+		Config: &container.Config{
+			Labels: map[string]string{
+				enabledLabel: "true",
+				rulesLabel: `
+output:
+- proto: tcp
+  port: 80
+- proto: tcp
+  port: 443`,
+			},
+		},
+		NetworkSettings: &types.NetworkSettings{
+			Networks: map[string]*network.EndpointSettings{
+				"cont_net": {
+					Gateway:   gatewayAddr.String(),
+					IPAddress: cont1Addr.String(),
+				},
+			},
+		},
+	}
+
+	is := is.New(t)
+	logger, err := zap.NewDevelopment()
+	is.NoErr(err)
+
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	r, err := NewRuleManager(context.Background(), logger, dbFile, defaultTimeout)
+	is.NoErr(err)
+
+	// configure database to pause before committing so we can cancel
+	// the context
+	committing := make(chan struct{})
+	done := make(chan struct{})
+	r.db = &dbOnCommit{
+		DB: r.db,
+		onCommit: func(tx database.TX) error {
+			committing <- struct{}{}
+			<-done
+			return tx.Commit()
+		},
+	}
+
+	dockerCli := newMockDockerClient(nil)
+	dockerCli.containers = []types.ContainerJSON{container}
+	r.newDockerClient = func() (dockerClient, error) {
+		return dockerCli, nil
+	}
+
+	// create mock nftables client and add required prerequisite
+	// DOCKER-USER chain
+	mfc := newMockFirewall(logger)
+	mfc.AddTable(filterTable)
+	mfc.AddChain(&nftables.Chain{
+		Name:  dockerChainName,
+		Table: filterTable,
+		Type:  nftables.ChainTypeFilter,
+	})
+	is.NoErr(mfc.Flush())
+	r.newFirewallClient = func() (firewallClient, error) {
+		return mfc, nil
+	}
+
+	// create new database and base rules
+	err = r.init(context.Background())
+	is.NoErr(err)
+	err = r.createBaseRules()
+	is.NoErr(err)
+	t.Cleanup(func() {
+		err := r.clearRules(context.Background())
+		is.NoErr(err)
+	})
+
+	t.Run("cancel", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+
+		// create rules
+		go func() {
+			err = r.createContainerRules(ctx, container, true)
+			is.True(errors.Is(err, context.Canceled))
+			done <- struct{}{}
+		}()
+
+		// wait until database transaction is about to be committed
+		<-committing
+
+		// check that rules were created
+		chainName := buildChainName(cont1Name, cont1ID)
+		chain := &nftables.Chain{
+			Table: filterTable,
+			Name:  chainName,
+		}
+		rules, err := mfc.GetRules(filterTable, chain)
+		is.NoErr(err)
+		is.True(len(rules) != 0)
+
+		// let database transaction error out
+		cancel()
+		done <- struct{}{}
+		// wait for rules cleanup to finish
+		<-done
+
+		// check that container chain was deleted
+		_, err = mfc.GetRules(filterTable, chain)
+		is.True(errors.Is(err, syscall.ENOENT))
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+
+		// create rules
+		go func() {
+			err = r.createContainerRules(ctx, container, true)
+			is.True(errors.Is(err, context.Canceled))
+			done <- struct{}{}
+		}()
+
+		// wait until database transaction is about to be committed
+		<-committing
+
+		// check that rules were created
+		chainName := buildChainName(cont1Name, cont1ID)
+		chain := &nftables.Chain{
+			Table: filterTable,
+			Name:  chainName,
+		}
+		rules, err := mfc.GetRules(filterTable, chain)
+		is.NoErr(err)
+		is.True(len(rules) != 0)
+
+		// let database transaction error out
+		err = r.deleteContainerRules(context.Background(), cont1ID, cont1Name)
+		is.NoErr(err)
+		done <- struct{}{}
+		// wait for rules cleanup to finish
+		<-done
+
+		// check that container chain was deleted
+		_, err = mfc.GetRules(filterTable, chain)
+		is.True(errors.Is(err, syscall.ENOENT))
+	})
 }
 
 func compareRules(t *testing.T, comparer func(r1, r2 *nftables.Rule) bool, chainName string, expectedRules, rules []*nftables.Rule) {

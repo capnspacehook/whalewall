@@ -22,6 +22,7 @@ import (
 	"gopkg.in/yaml.v3"
 	_ "modernc.org/sqlite"
 
+	"github.com/capnspacehook/whalewall/container"
 	"github.com/capnspacehook/whalewall/database"
 )
 
@@ -51,10 +52,12 @@ type RuleManager struct {
 	newDockerClient   dockerClientCreator
 	newFirewallClient firewallClientCreator
 
+	containerTracker *container.Tracker
+
 	createCh chan containerDetails
 	deleteCh chan string
 
-	db        *database.DB
+	db        database.DB
 	dockerCli dockerClient
 }
 
@@ -85,6 +88,9 @@ func NewRuleManager(ctx context.Context, logger *zap.Logger, dbFile string, time
 		newFirewallClient: func() (firewallClient, error) {
 			return nftables.New()
 		},
+		containerTracker: container.NewTracker(logger),
+		createCh:         make(chan containerDetails),
+		deleteCh:         make(chan string),
 	}
 	err := r.initDB(ctx, dbFile)
 	if err != nil {
@@ -92,14 +98,6 @@ func NewRuleManager(ctx context.Context, logger *zap.Logger, dbFile string, time
 	}
 
 	return &r, nil
-}
-
-func (r *RuleManager) setDockerClientCreator(dc dockerClientCreator) {
-	r.newDockerClient = dc
-}
-
-func (r *RuleManager) setFirewallClientCreator(fc firewallClientCreator) {
-	r.newFirewallClient = fc
 }
 
 func (r *RuleManager) Start(ctx context.Context) error {
@@ -113,9 +111,6 @@ func (r *RuleManager) Start(ctx context.Context) error {
 	if err := r.cleanupRules(ctx); err != nil {
 		r.logger.Error("error cleaning up rules", zap.Error(err))
 	}
-
-	r.createCh = make(chan containerDetails)
-	r.deleteCh = make(chan string)
 
 	r.wg.Add(2)
 	go func() {
@@ -230,6 +225,7 @@ func (r *RuleManager) initDB(ctx context.Context, dbFile string) error {
 		}
 	}
 
+	dbFile += "?_txlock=immediate"
 	sqlDB, err := sql.Open("sqlite", dbFile)
 	if err != nil {
 		return fmt.Errorf("error opening database: %w", err)
@@ -294,7 +290,7 @@ func (r *RuleManager) Done() <-chan struct{} {
 }
 
 func (r *RuleManager) Stop() {
-	r.stopping <- struct{}{}
+	close(r.stopping)
 	r.wg.Wait()
 
 	if err := r.dockerCli.Close(); err != nil {
