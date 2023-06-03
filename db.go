@@ -70,11 +70,6 @@ func (r *RuleManager) deleteContainer(ctx context.Context, tx database.TX, id, n
 	if err := tx.DeleteWaitingContainerRules(ctx, id); err != nil {
 		return fmt.Errorf("error deleting waiting container rules in database: %w", err)
 	}
-	// activate waiting container rules concerning this container so
-	// that if it restarts those rules can be recreated
-	if err := tx.ActivateWaitingContainerRules(ctx, name); err != nil {
-		return fmt.Errorf("error updating waiting container rules in database: %w", err)
-	}
 	if err := tx.DeleteContainer(ctx, id); err != nil {
 		return fmt.Errorf("error deleting container in database: %w", err)
 	}

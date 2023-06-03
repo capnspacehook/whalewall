@@ -9,20 +9,6 @@ import (
 	"context"
 )
 
-const activateWaitingContainerRules = `-- name: ActivateWaitingContainerRules :exec
-UPDATE
-	waiting_container_rules
-SET
-	active = TRUE
-WHERE
-	dst_container_name = ?
-`
-
-func (q *Queries) ActivateWaitingContainerRules(ctx context.Context, dstContainerName string) error {
-	_, err := q.exec(ctx, q.activateWaitingContainerRulesStmt, activateWaitingContainerRules, dstContainerName)
-	return err
-}
-
 const addContainer = `-- name: AddContainer :exec
 INSERT INTO
 	containers(id, name)
@@ -89,15 +75,13 @@ INSERT INTO
 	(
 		src_container_id,
 		dst_container_name,
-		rule,
-		active
+		rule
 	)
 VALUES
 	(
 		?,
 		?,
-		?,
-		TRUE
+		?
 	)
 ON CONFLICT(src_container_id, dst_container_name, rule) DO NOTHING
 `
@@ -130,20 +114,6 @@ func (q *Queries) ContainerExists(ctx context.Context, id string) (int64, error)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
-}
-
-const deactivateWaitingContainerRules = `-- name: DeactivateWaitingContainerRules :exec
-UPDATE
-	waiting_container_rules
-SET
-	active = FALSE
-WHERE
-	dst_container_name = ?
-`
-
-func (q *Queries) DeactivateWaitingContainerRules(ctx context.Context, dstContainerName string) error {
-	_, err := q.exec(ctx, q.deactivateWaitingContainerRulesStmt, deactivateWaitingContainerRules, dstContainerName)
-	return err
 }
 
 const deleteContainer = `-- name: DeleteContainer :exec
@@ -377,8 +347,7 @@ JOIN
 ON
 	c.id = w.src_container_id
 WHERE
-	w.dst_container_name = ? AND
-	w.active = TRUE
+	w.dst_container_name = ?
 `
 
 type GetWaitingContainerRulesRow struct {

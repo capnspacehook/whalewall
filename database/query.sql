@@ -1,11 +1,3 @@
--- name: ActivateWaitingContainerRules :exec
-UPDATE
-	waiting_container_rules
-SET
-	active = TRUE
-WHERE
-	dst_container_name = ?;
-
 -- name: AddContainer :exec
 INSERT INTO
 	containers(id, name)
@@ -48,15 +40,13 @@ INSERT INTO
 	(
 		src_container_id,
 		dst_container_name,
-		rule,
-		active
+		rule
 	)
 VALUES
 	(
 		?,
 		?,
-		?,
-		TRUE
+		?
 	)
 ON CONFLICT(src_container_id, dst_container_name, rule) DO NOTHING;
 
@@ -95,14 +85,6 @@ DELETE FROM
 WHERE
 	src_container_id = ? OR
 	dst_container_id = ?;
-
--- name: DeactivateWaitingContainerRules :exec
-UPDATE
-	waiting_container_rules
-SET
-	active = FALSE
-WHERE
-	dst_container_name = ?;
 
 -- name: DeleteWaitingContainerRules :exec
 DELETE FROM
@@ -179,5 +161,4 @@ JOIN
 ON
 	c.id = w.src_container_id
 WHERE
-	w.dst_container_name = ? AND
-	w.active = TRUE;
+	w.dst_container_name = ?;

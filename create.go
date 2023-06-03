@@ -69,10 +69,7 @@ func (r *RuleManager) createRules(ctx context.Context) {
 	}
 }
 
-// createContainerRules adds nftables rules for a container.
-// TODO: when container isn't new, remove any rules not created by whalewall
-// TODO: if the container dies while rules are still being created, stop
-// creating rules and remove whatever was created
+// createContainerRules creates nftables rules for a container.
 func (r *RuleManager) createContainerRules(ctx context.Context, container types.ContainerJSON, isNew bool) (retErr error) {
 	ctx, cleanup := r.containerTracker.StartCreatingContainer(ctx, container.ID)
 	defer cleanup()
@@ -198,6 +195,11 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 			return err
 		}
 
+		// keep track of rules that were generated from the given config
+		// so we can remove rules in this container's chain not created
+		// by whalewall
+		createdRules = append(createdRules, rules...)
+
 		// ensure we aren't creating existing rules
 		currentRules := make(map[string][]*nftables.Rule)
 		for _, rule := range rules {
@@ -227,7 +229,6 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 			// insert rules in reverse order that they were created in to maintain order
 			for i := len(rules) - 1; i >= 0; i-- {
 				nfc.InsertRule(rules[i])
-				createdRules = append(createdRules, rules[i])
 			}
 		} else {
 			for _, rule := range rules {
@@ -295,6 +296,30 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 		}
 		if err := createRules(portMapRules, true); err != nil {
 			logger.Error("error creating mapped port rules", zap.Error(err))
+		}
+	}
+
+	// remove rules in this container's chain not created by whalewall
+	currentRules, err := nfc.GetRules(chain.Table, chain)
+	if err != nil {
+		return fmt.Errorf("error getting rules of chain %q: %w", chain.Name, err)
+	}
+	createdContRules := make([]*nftables.Rule, 0, len(createdRules)/2)
+	for _, rule := range createdRules {
+		if rule.Chain.Name == chain.Name {
+			createdContRules = append(createdContRules, rule)
+		}
+	}
+	for _, currentRule := range currentRules {
+		if !findRule(logger, currentRule, createdContRules) {
+			if err := nfc.DelRule(currentRule); err != nil {
+				logger.Error("error deleting rule", zap.Error(err))
+				continue
+			}
+			logger.Warn("deleting rule not created by whalewall", zap.String("chain.name", chain.Name))
+			if err := ignoringErr(nfc.Flush, syscall.ENOENT); err != nil {
+				logger.Error("error deleting rule", zap.Error(err))
+			}
 		}
 	}
 
@@ -743,7 +768,6 @@ func (r *RuleManager) createWaitingContainerRules(ctx context.Context, logger *z
 	var (
 		waitingRules []database.GetWaitingContainerRulesRow
 		err          error
-		foundName    string
 		aliases      = append([]string{name}, containerAliases(name, service)...)
 	)
 
@@ -756,7 +780,6 @@ func (r *RuleManager) createWaitingContainerRules(ctx context.Context, logger *z
 		if len(waitingRules) == 0 {
 			continue
 		}
-		foundName = alias
 		break
 	}
 	if waitingRules == nil {
@@ -817,12 +840,6 @@ func (r *RuleManager) createWaitingContainerRules(ctx context.Context, logger *z
 			r.createNFTRules(logger, rule)...,
 		)
 		estContainers[waitingRule.SrcContainerID] = struct{}{}
-	}
-
-	// deactivate waiting container rules so these rules are not created
-	// again unless this container is restarted
-	if err := tx.DeactivateWaitingContainerRules(ctx, foundName); err != nil {
-		return nil, fmt.Errorf("error updating waiting container rules from database: %w", err)
 	}
 
 	return nftRules, nil
