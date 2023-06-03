@@ -89,16 +89,18 @@ func retryIfBusy[T any](f func() (T, error)) (T, error) {
 }
 
 func NewDB(ctx context.Context, database *sql.DB) (DB, error) {
-	q, err := Prepare(ctx, database)
+	queries, err := Prepare(ctx, database)
 	if err != nil {
 		return nil, err
 	}
+	wrappedDB := &dbRetrier{
+		DB: database,
+	}
+	queries.db = wrappedDB
 
 	return &db{
-		Queries: q,
-		db: &dbRetrier{
-			DB: database,
-		},
+		Queries: queries,
+		db:      wrappedDB,
 	}, nil
 }
 
@@ -121,6 +123,10 @@ func (d *db) Begin(ctx context.Context, logger *zap.Logger) (TX, error) {
 	}
 
 	return &tx{
+		// the transaction doesn't need to be wrapped with dbRetrier
+		// because '_txlock=immediate' is set, so if the transaction
+		// is created successfully, it is guaranteed not to fail with
+		// SQLITE_BUSY
 		Queries: d.WithTx(transaction),
 		ctx:     ctx,
 		logger:  logger,
