@@ -1890,8 +1890,8 @@ mapped_ports:
 			t.Run(tt.name+" | delete container rules", testCreatingRules(tt, true, false))
 			t.Run(tt.name+" | clear all rules", testCreatingRules(tt, true, true))
 		} else {
-			t.Run(tt.name+" | all started | delete container rules", testCreatingRules(tt, true, false))
-			t.Run(tt.name+" | all started | clear all rules", testCreatingRules(tt, true, true))
+			t.Run(tt.name+" | all containers started | delete container rules", testCreatingRules(tt, true, false))
+			t.Run(tt.name+" | all containers started | clear all rules", testCreatingRules(tt, true, true))
 			t.Run(tt.name+" | one container at a time | delete container rules", testCreatingRules(tt, false, false))
 			t.Run(tt.name+" | one container at a time | clear all rules", testCreatingRules(tt, false, true))
 		}

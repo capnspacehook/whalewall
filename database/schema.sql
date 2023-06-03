@@ -31,7 +31,6 @@ CREATE TABLE waiting_container_rules (
   src_container_id   TEXT    NOT NULL,
   dst_container_name TEXT    NOT NULL,
   rule               BLOB    NOT NULL,
-  active             INTEGER NOT NULL,
 
   PRIMARY KEY(src_container_id, dst_container_name, rule),
   FOREIGN KEY (src_container_id) REFERENCES containers(id)

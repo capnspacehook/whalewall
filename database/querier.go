@@ -9,14 +9,12 @@ import (
 )
 
 type Querier interface {
-	ActivateWaitingContainerRules(ctx context.Context, dstContainerName string) error
 	AddContainer(ctx context.Context, iD string, name string) error
 	AddContainerAddr(ctx context.Context, addr []byte, containerID string) error
 	AddContainerAlias(ctx context.Context, containerID string, containerAlias string) error
 	AddEstContainer(ctx context.Context, srcContainerID string, dstContainerID string) error
 	AddWaitingContainerRule(ctx context.Context, arg AddWaitingContainerRuleParams) error
 	ContainerExists(ctx context.Context, id string) (int64, error)
-	DeactivateWaitingContainerRules(ctx context.Context, dstContainerName string) error
 	DeleteContainer(ctx context.Context, id string) error
 	DeleteContainerAddrs(ctx context.Context, containerID string) error
 	DeleteContainerAliases(ctx context.Context, containerID string) error

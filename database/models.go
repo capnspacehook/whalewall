@@ -30,5 +30,4 @@ type WaitingContainerRule struct {
 	SrcContainerID   string
 	DstContainerName string
 	Rule             []byte
-	Active           int64
 }
