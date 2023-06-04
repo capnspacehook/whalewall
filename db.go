@@ -56,7 +56,7 @@ func containerAliases(name, service string) []string {
 	return aliases
 }
 
-func (r *RuleManager) deleteContainer(ctx context.Context, tx database.TX, id, name string) error {
+func (r *RuleManager) deleteContainer(ctx context.Context, tx database.TX, id string) error {
 	if err := tx.DeleteContainerAddrs(ctx, id); err != nil {
 		return fmt.Errorf("error deleting container addrs in database: %w", err)
 	}
