@@ -234,7 +234,7 @@ func (r *RuleManager) deleteContainerRules(ctx context.Context, id, name string)
 	}
 
 	logger.Debug("deleting from database")
-	if err := r.deleteContainer(ctx, tx, id, name); err != nil {
+	if err := r.deleteContainer(ctx, tx, id); err != nil {
 		return fmt.Errorf("error deleting container from database: %w", err)
 	}
 
