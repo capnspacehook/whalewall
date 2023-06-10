@@ -12,16 +12,20 @@ services:
             allow: true
         output:
           - proto: udp
-            port: 53
+            dst_ports:
+              - 53
           - ip: 1.1.1.1
             proto: tcp
-            port: 80
+            dst_ports:
+              - 80
           - proto: tcp
-            port: 443
+            dst_ports:
+              - 443
           - network: default
             container: server
             proto: tcp
-            port: 756
+            dst_ports: 
+              - 756
     ports:
       - "8080:80"
 

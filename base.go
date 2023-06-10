@@ -3,6 +3,7 @@ package whalewall
 import (
 	"errors"
 	"fmt"
+	"syscall"
 
 	"github.com/google/nftables"
 	"github.com/google/nftables/expr"
@@ -156,6 +157,9 @@ func (r *RuleManager) createBaseRules() error {
 				Policy:   ref(nftables.ChainPolicyAccept),
 			}
 			nfc.AddChain(mainChain)
+			if err := ignoringErr(nfc.Flush, syscall.EEXIST); err != nil {
+				return fmt.Errorf("error creating chain: %w", err)
+			}
 		}
 
 		rules, err := nfc.GetRules(filterTable, mainChain)
