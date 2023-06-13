@@ -690,6 +690,85 @@ output:
 			},
 		},
 		{
+			name: "allow outbound from one source port",
+			containers: []types.ContainerJSON{
+				{
+					ContainerJSONBase: &types.ContainerJSONBase{
+						ID:   cont1ID,
+						Name: "/" + cont1Name,
+					},
+					Config: &container.Config{
+						Labels: map[string]string{
+							enabledLabel: "true",
+							rulesLabel: `
+output:
+  - proto: udp
+    src_ports:
+      - 500
+    dst_ports:
+      - 100-200`,
+						},
+					},
+					NetworkSettings: &types.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"default": {
+								Gateway:   gatewayAddr.String(),
+								IPAddress: cont1Addr.String(),
+							},
+						},
+					},
+				},
+			},
+			expectedRules: map[*nftables.Chain][]*nftables.Rule{
+				{
+					Name:  buildChainName(cont1Name, cont1ID),
+					Table: filterTable,
+				}: {
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchProtoExprs(unix.IPPROTO_UDP),
+							matchPortExprs(500, srcPortOffset),
+							matchPortsExprs(portInterval{
+								min: 100,
+								max: 200,
+							}, dstPortOffset),
+							matchConnStateExprs(stateNewEst),
+							[]expr.Any{
+								&expr.Counter{},
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchProtoExprs(unix.IPPROTO_UDP),
+							matchPortsExprs(portInterval{
+								min: 100,
+								max: 200,
+							}, srcPortOffset),
+							matchPortExprs(500, dstPortOffset),
+							matchConnStateExprs(stateEst),
+							[]expr.Any{
+								&expr.Counter{},
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					createDropRule(
+						&nftables.Chain{
+							Name:  buildChainName(cont1Name, cont1ID),
+							Table: filterTable,
+						},
+						cont1ID,
+					),
+				},
+			},
+		},
+		{
 			name: "verdict with log prefix",
 			containers: []types.ContainerJSON{
 				{
@@ -1114,6 +1193,114 @@ output:
 							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_UDP),
 							matchPortExprs(9001, srcPortOffset),
+							matchConnStateExprs(stateEst),
+							[]expr.Any{
+								&expr.Counter{},
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					createDropRule(
+						&nftables.Chain{
+							Name:  buildChainName(cont2Name, cont2ID),
+							Table: filterTable,
+						},
+						cont2ID,
+					),
+				},
+			},
+		},
+		{
+			name: "allow access to container with one source port",
+			containers: []types.ContainerJSON{
+				{
+					ContainerJSONBase: &types.ContainerJSONBase{
+						ID:   cont1ID,
+						Name: "/" + cont1Name,
+					},
+					Config: &container.Config{
+						Labels: map[string]string{
+							enabledLabel: "true",
+							rulesLabel: `
+output:
+  - container: container2
+    network: cont_net
+    proto: udp
+    src_ports:
+      - 42
+    dst_ports:
+      - 9001`,
+						},
+					},
+					NetworkSettings: &types.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"cont_net": {
+								Gateway:   gatewayAddr.String(),
+								IPAddress: cont1Addr.String(),
+							},
+						},
+					},
+				},
+				{
+					ContainerJSONBase: &types.ContainerJSONBase{
+						ID:   cont2ID,
+						Name: "/" + cont2Name,
+					},
+					Config: &container.Config{
+						Labels: map[string]string{
+							enabledLabel: "true",
+						},
+					},
+					NetworkSettings: &types.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"cont_net": {
+								Gateway:   gatewayAddr.String(),
+								IPAddress: cont2Addr.String(),
+							},
+						},
+					},
+				},
+			},
+			expectedRules: map[*nftables.Chain][]*nftables.Rule{
+				{
+					Name:  buildChainName(cont1Name, cont1ID),
+					Table: filterTable,
+				}: {
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchIPExprs(ref(cont2Addr.As4())[:], dstAddrOffset),
+							matchProtoExprs(unix.IPPROTO_UDP),
+							matchPortExprs(42, srcPortOffset),
+							matchPortExprs(9001, dstPortOffset),
+							matchConnStateExprs(stateNewEst),
+							[]expr.Any{
+								&expr.Counter{},
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont2ID),
+					},
+					createDropRule(
+						&nftables.Chain{
+							Name:  buildChainName(cont1Name, cont1ID),
+							Table: filterTable,
+						},
+						cont1ID,
+					),
+				},
+				{
+					Name:  buildChainName(cont2Name, cont2ID),
+					Table: filterTable,
+				}: {
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont2Addr.As4())[:], srcAddrOffset),
+							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchProtoExprs(unix.IPPROTO_UDP),
+							matchPortExprs(9001, srcPortOffset),
+							matchPortExprs(42, dstPortOffset),
 							matchConnStateExprs(stateEst),
 							[]expr.Any{
 								&expr.Counter{},
