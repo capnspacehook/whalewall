@@ -243,7 +243,10 @@ output:
     container: ""
     # required; either 'tcp' or 'udp'
     proto: ""
-    # required; the destination ports to allow traffic to. This can be either a single port or a
+    # optional; the source ports to allow traffic to. This can be either a single port or a
+    # range of ports
+    src_ports: []
+    # optional; the destination ports to allow traffic to. This can be either a single port or a
     # range of ports
     dst_ports: []
     # optional; settings that allow you to filter traffic further if desired

@@ -43,7 +43,8 @@ type ruleConfig struct {
 	IP        addrOrRange
 	Container string
 	Proto     protocol
-	DstPorts  []ports `yaml:"dst_ports"`
+	SrcPorts  []rulePorts `yaml:"src_ports"`
+	DstPorts  []rulePorts `yaml:"dst_ports"`
 	Verdict   verdict
 
 	skip bool
@@ -63,6 +64,9 @@ func (r ruleConfig) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 		enc.AddString("container", r.Container)
 	}
 	enc.AddString("proto", r.Proto.String())
+	if err := enc.AddArray("src_ports", portsList(r.SrcPorts)); err != nil {
+		return err
+	}
 	if err := enc.AddArray("dst_ports", portsList(r.DstPorts)); err != nil {
 		return err
 	}
@@ -202,7 +206,7 @@ func (p protocol) String() string {
 	}
 }
 
-type portsList []ports
+type portsList []rulePorts
 
 func (p portsList) MarshalLogArray(enc zapcore.ArrayEncoder) error {
 	for _, port := range p {
@@ -214,7 +218,7 @@ func (p portsList) MarshalLogArray(enc zapcore.ArrayEncoder) error {
 	return nil
 }
 
-type ports struct {
+type rulePorts struct {
 	single   uint16
 	interval portInterval
 }
@@ -224,18 +228,18 @@ type portInterval struct {
 	max uint16
 }
 
-func (p ports) MarshalText() ([]byte, error) {
+func (p rulePorts) MarshalText() ([]byte, error) {
 	if p.single != 0 {
 		return []byte(strconv.Itoa(int(p.single))), nil
 	}
 	return []byte(fmt.Sprintf("%d-%d", p.interval.min, p.interval.max)), nil
 }
 
-func (p ports) MarshalBinary() ([]byte, error) {
+func (p rulePorts) MarshalBinary() ([]byte, error) {
 	return p.MarshalText()
 }
 
-func (p *ports) UnmarshalText(text []byte) error {
+func (p *rulePorts) UnmarshalText(text []byte) error {
 	var intervalIdx int
 	validChars := []byte{'1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-'}
 	for i, char := range text {
@@ -253,7 +257,7 @@ func (p *ports) UnmarshalText(text []byte) error {
 		}
 	}
 
-	var parsedPorts ports
+	var parsedPorts rulePorts
 	if intervalIdx != 0 {
 		min, err := strconv.ParseUint(string(text[:intervalIdx]), 10, 16)
 		if err != nil {
@@ -280,11 +284,11 @@ func (p *ports) UnmarshalText(text []byte) error {
 	return nil
 }
 
-func (p *ports) UnmarshalBinary(data []byte) error {
+func (p *rulePorts) UnmarshalBinary(data []byte) error {
 	return p.UnmarshalText(data)
 }
 
-func (p ports) MarshalLogObject(enc zapcore.ObjectEncoder) error {
+func (p rulePorts) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 	text, _ := p.MarshalText()
 	enc.AddString("ports", string(text))
 	return nil
@@ -302,7 +306,7 @@ func validateConfig(c config) error {
 }
 
 func validateRule(r ruleConfig) error {
-	if !r.IP.IsValid() && r.Container == "" && r.Proto == invalidProto && len(r.DstPorts) == 0 {
+	if !r.IP.IsValid() && r.Container == "" && r.Proto == invalidProto && len(r.SrcPorts) == 0 && len(r.DstPorts) == 0 {
 		return errors.New("rule is empty")
 	}
 	if r.IP.IsValid() && r.Container != "" {
@@ -313,6 +317,9 @@ func validateRule(r ruleConfig) error {
 		return errors.New(`"network" must be set when "container" is set`)
 	}
 
+	if len(r.SrcPorts) != 0 && r.Proto == invalidProto {
+		return errors.New(`"proto" must be set when "src_ports" is set`)
+	}
 	if len(r.DstPorts) != 0 && r.Proto == invalidProto {
 		return errors.New(`"proto" must be set when "dst_ports" is set`)
 	}
