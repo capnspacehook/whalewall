@@ -76,7 +76,7 @@ func TestIntegration(t *testing.T) {
 	checkFirewallRules()
 
 	// ensure correct nftables chains exist
-	dockerClient, err := client.NewClientWithOpts(client.FromEnv)
+	dockerClient, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	is.NoErr(err)
 	t.Cleanup(func() {
 		dockerClient.Close()

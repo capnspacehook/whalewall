@@ -76,7 +76,7 @@ func NewRuleManager(ctx context.Context, logger *zap.Logger, dbFile string, time
 		done:     make(chan struct{}),
 		logger:   logger,
 		newDockerClient: func() (dockerClient, error) {
-			dc, err := client.NewClientWithOpts(client.FromEnv)
+			dc, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 			if err != nil {
 				return nil, err
 			}
