@@ -156,15 +156,18 @@ services:
           - network: default
             container: miniflux_db
             proto: tcp
-            port: 5432
+            dst_ports:
+              - 5432
           # allow DNS requests
           - log_prefix: "dns"
             proto: udp
-            port: 53
+            dst_ports:
+              - 53
           # allow HTTPS requests
           - log_prefix: "https"
             proto: tcp
-            port: 443
+            dst_ports:
+              - 443
     ports:
       - "80:8080/tcp"
 
@@ -240,8 +243,9 @@ output:
     container: ""
     # required; either 'tcp' or 'udp'
     proto: ""
-    # required; the port to allow traffic to
-    port: 0
+    # required; the destination ports to allow traffic to. This can be either a single port or a
+    # range of ports
+    dst_ports: []
     # optional; settings that allow you to filter traffic further if desired
     verdict:
       # optional; a chain to jump to after matching traffic. This applies to new and established

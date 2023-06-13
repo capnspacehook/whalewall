@@ -269,7 +269,8 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 	// create rules that allow traffic from another container to this
 	// container if necessary that couldn't be created before
 	service := container.Config.Labels[composeServiceLabel]
-	waitingRules, err := r.createWaitingContainerRules(ctx, logger, tx, container.ID, contName, service, project, addrs, chain, estContainers)
+	logger.Debug("creating waiting rules")
+	waitingRules, err := r.createWaitingContainerRules(ctx, nfc, logger, tx, container.ID, contName, service, project, addrs, chain, estContainers)
 	if err != nil {
 		return fmt.Errorf("error creating waiting output rules: %w", err)
 	}
@@ -281,7 +282,8 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 	// traffic to/from the container will be added
 	if configExists {
 		// handle outbound rules
-		outputRules, err := r.createOutputRules(ctx, logger, tx, rulesCfg.Output, project, addrs, chain, contName, container.ID)
+		logger.Debug("creating output rules")
+		outputRules, err := r.createOutputRules(ctx, nfc, logger, tx, rulesCfg.Output, project, addrs, chain, contName, container.ID)
 		if err != nil {
 			return fmt.Errorf("error creating output rules: %w", err)
 		}
@@ -290,7 +292,8 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 		}
 
 		// handle port mapping rules
-		portMapRules, err := r.createPortMappingRules(logger, container, contName, rulesCfg.MappedPorts, addrs, chain)
+		logger.Debug("creating mapped port rules")
+		portMapRules, err := r.createPortMappingRules(nfc, logger, container, contName, rulesCfg.MappedPorts, addrs, chain)
 		if err != nil {
 			return fmt.Errorf("error creating port mapping rules: %w", err)
 		}
@@ -515,7 +518,7 @@ func buildChainName(name, id string) string {
 
 // createPortMappingRules adds nftables rules to allow or deny access to
 // mapped ports.
-func (r *RuleManager) createPortMappingRules(logger *zap.Logger, container types.ContainerJSON, contName string, mappedPortsCfg mappedPorts, addrs map[string][]byte, chain *nftables.Chain) ([]*nftables.Rule, error) {
+func (r *RuleManager) createPortMappingRules(nfc firewallClient, logger *zap.Logger, container types.ContainerJSON, contName string, mappedPortsCfg mappedPorts, addrs map[string][]byte, chain *nftables.Chain) ([]*nftables.Rule, error) {
 	// check if there are any mapped ports to create rules for
 	var hasMappedPorts bool
 	for _, hostPorts := range container.NetworkSettings.Ports {
@@ -551,10 +554,10 @@ func (r *RuleManager) createPortMappingRules(logger *zap.Logger, container types
 
 		// sort mapped ports so rules are created deterministically making
 		// testing much easier
-		ports := maps.Keys(container.NetworkSettings.Ports)
-		slices.Sort(ports)
+		sortedPorts := maps.Keys(container.NetworkSettings.Ports)
+		slices.Sort(sortedPorts)
 
-		for _, port := range ports {
+		for _, port := range sortedPorts {
 			hostPorts := container.NetworkSettings.Ports[port]
 			localAllowed := mappedPortsCfg.Localhost.Allow
 
@@ -605,17 +608,24 @@ func (r *RuleManager) createPortMappingRules(logger *zap.Logger, container types
 							IP: addrOrRange{
 								addr: gateway,
 							},
-							Proto:   proto,
-							Port:    uint16(port.Int()),
+							Proto: proto,
+							DstPorts: []ports{
+								{
+									single: uint16(port.Int()),
+								},
+							},
 							Verdict: mappedPortsCfg.Localhost.Verdict,
 						},
 						chain:  chain,
 						contID: container.ID,
 					}
 					rule.cfg.Verdict.drop = !localAllowed
-					nftRules = append(nftRules,
-						r.createNFTRules(logger, rule)...,
-					)
+
+					rules, err := createNFTRules(nfc, logger, rule)
+					if err != nil {
+						return nil, fmt.Errorf("error creating firewall rules: %w", err)
+					}
+					nftRules = append(nftRules, rules...)
 				}
 
 				if !localAllowed {
@@ -634,7 +644,11 @@ func (r *RuleManager) createPortMappingRules(logger *zap.Logger, container types
 								addr: localAddr,
 							},
 							Proto: proto,
-							Port:  uint16(hostPortInt),
+							DstPorts: []ports{
+								{
+									single: uint16(hostPortInt),
+								},
+							},
 							Verdict: verdict{
 								drop: true,
 							},
@@ -642,9 +656,12 @@ func (r *RuleManager) createPortMappingRules(logger *zap.Logger, container types
 						chain:  whalewallChain,
 						contID: container.ID,
 					}
-					nftRules = append(nftRules,
-						r.createNFTRules(logger, localhostDropRule)...,
-					)
+
+					rules, err := createNFTRules(nfc, logger, localhostDropRule)
+					if err != nil {
+						return nil, fmt.Errorf("error creating firewall rules: %w", err)
+					}
+					nftRules = append(nftRules, rules...)
 				}
 			}
 
@@ -661,15 +678,22 @@ func (r *RuleManager) createPortMappingRules(logger *zap.Logger, container types
 						LogPrefix: mappedPortsCfg.External.LogPrefix,
 						IP:        mappedPortsCfg.External.IP,
 						Proto:     proto,
-						Port:      uint16(port.Int()),
-						Verdict:   mappedPortsCfg.External.Verdict,
+						DstPorts: []ports{
+							{
+								single: uint16(port.Int()),
+							},
+						},
+						Verdict: mappedPortsCfg.External.Verdict,
 					},
 					chain:  chain,
 					contID: container.ID,
 				}
-				nftRules = append(nftRules,
-					r.createNFTRules(logger, rule)...,
-				)
+
+				rules, err := createNFTRules(nfc, logger, rule)
+				if err != nil {
+					return nil, fmt.Errorf("error creating firewall rules: %w", err)
+				}
+				nftRules = append(nftRules, rules...)
 			}
 		}
 	}
@@ -679,7 +703,7 @@ func (r *RuleManager) createPortMappingRules(logger *zap.Logger, container types
 
 // createOutputRules adds nftables rules to allow outbound access from
 // a container.
-func (r *RuleManager) createOutputRules(ctx context.Context, logger *zap.Logger, tx database.TX, ruleCfgs []ruleConfig, project string, addrs map[string][]byte, chain *nftables.Chain, name, id string) ([]*nftables.Rule, error) {
+func (r *RuleManager) createOutputRules(ctx context.Context, nfc firewallClient, logger *zap.Logger, tx database.TX, ruleCfgs []ruleConfig, project string, addrs map[string][]byte, chain *nftables.Chain, name, id string) ([]*nftables.Rule, error) {
 	nftRules := make([]*nftables.Rule, 0, len(ruleCfgs)*3)
 	for _, ruleCfg := range ruleCfgs {
 		// prepend container name and ID to log prefixes
@@ -721,15 +745,19 @@ func (r *RuleManager) createOutputRules(ctx context.Context, logger *zap.Logger,
 				rule.estContID = id
 			}
 
-			nftRules = append(nftRules,
-				r.createNFTRules(logger, rule)...,
-			)
+			rules, err := createNFTRules(nfc, logger, rule)
+			if err != nil {
+				return nil, fmt.Errorf("error creating firewall rules: %w", err)
+			}
+			nftRules = append(nftRules, rules...)
 		} else {
 			for _, addr := range addrs {
 				rule.addr = addr
-				nftRules = append(nftRules,
-					r.createNFTRules(logger, rule)...,
-				)
+				rules, err := createNFTRules(nfc, logger, rule)
+				if err != nil {
+					return nil, fmt.Errorf("error creating firewall rules: %w", err)
+				}
+				nftRules = append(nftRules, rules...)
 			}
 		}
 	}
@@ -764,7 +792,7 @@ func (r *RuleManager) getContainerIDAndName(ctx context.Context, db database.Que
 // from another container to this container. The other container was
 // processed before this container, so rules concerning this container
 // couldn't be created until now.
-func (r *RuleManager) createWaitingContainerRules(ctx context.Context, logger *zap.Logger, tx database.TX, id, name, service, project string, addrs map[string][]byte, chain *nftables.Chain, estContainers map[string]struct{}) ([]*nftables.Rule, error) {
+func (r *RuleManager) createWaitingContainerRules(ctx context.Context, nfc firewallClient, logger *zap.Logger, tx database.TX, id, name, service, project string, addrs map[string][]byte, chain *nftables.Chain, estContainers map[string]struct{}) ([]*nftables.Rule, error) {
 	var (
 		waitingRules []database.GetWaitingContainerRulesRow
 		err          error
@@ -836,9 +864,12 @@ func (r *RuleManager) createWaitingContainerRules(ctx context.Context, logger *z
 			contID:    id,
 			estContID: waitingRule.SrcContainerID,
 		}
-		nftRules = append(nftRules,
-			r.createNFTRules(logger, rule)...,
-		)
+
+		rules, err := createNFTRules(nfc, logger, rule)
+		if err != nil {
+			return nil, fmt.Errorf("error creating firewall rules: %w", err)
+		}
+		nftRules = append(nftRules, rules...)
 		estContainers[waitingRule.SrcContainerID] = struct{}{}
 	}
 
@@ -889,7 +920,7 @@ func (r ruleDetails) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 }
 
 // createNFTRules returns a slice of [*nftables.Rule] described by rd.
-func (r *RuleManager) createNFTRules(logger *zap.Logger, rd ruleDetails) []*nftables.Rule {
+func createNFTRules(nfc firewallClient, logger *zap.Logger, rd ruleDetails) ([]*nftables.Rule, error) {
 	logger.Debug("creating rule", zap.Object("rule", rd))
 
 	rules := make([]*nftables.Rule, 0, 3)
@@ -902,24 +933,40 @@ func (r *RuleManager) createNFTRules(logger *zap.Logger, rd ruleDetails) []*nfta
 
 	// if the rule is a drop rule, only need to handle new traffic
 	if rd.cfg.Verdict.drop {
-		return append(rules,
-			createNFTRule(rd.inbound, dstPortOffset, stateNew, rd.addr, rd.cfg, 0, rd.chain, rd.contID),
-		)
+		rule, err := createNFTRule(nfc, rd.inbound, dstPortOffset, stateNew, rd.addr, rd.cfg, 0, rd.chain, rd.contID)
+		if err != nil {
+			return nil, err
+		}
+		return append(rules, rule), nil
 	}
 
 	if rd.cfg.Verdict.Queue == 0 {
 		if rd.cfg.LogPrefix == "" {
-			return append(rules,
-				createNFTRule(rd.inbound, dstPortOffset, stateNewEst, rd.addr, rd.cfg, 0, rd.chain, rd.contID),
-				createNFTRule(!rd.inbound, srcPortOffset, stateEst, rd.addr, rd.cfg, 0, rd.estChain, estContID),
-			)
+			newEstRule, err := createNFTRule(nfc, rd.inbound, dstPortOffset, stateNewEst, rd.addr, rd.cfg, 0, rd.chain, rd.contID)
+			if err != nil {
+				return nil, err
+			}
+			estRule, err := createNFTRule(nfc, !rd.inbound, srcPortOffset, stateEst, rd.addr, rd.cfg, 0, rd.estChain, estContID)
+			if err != nil {
+				return nil, err
+			}
+			return append(rules, newEstRule, estRule), nil
 		}
+
 		// create a separate rule for new traffic to log it
-		return append(rules,
-			createNFTRule(rd.inbound, dstPortOffset, stateNew, rd.addr, rd.cfg, 0, rd.chain, rd.contID),
-			createNFTRule(rd.inbound, dstPortOffset, stateEst, rd.addr, rd.cfg, 0, rd.chain, rd.contID),
-			createNFTRule(!rd.inbound, srcPortOffset, stateEst, rd.addr, rd.cfg, 0, rd.estChain, estContID),
-		)
+		dstNewRule, err := createNFTRule(nfc, rd.inbound, dstPortOffset, stateNew, rd.addr, rd.cfg, 0, rd.chain, rd.contID)
+		if err != nil {
+			return nil, err
+		}
+		dstEstRule, err := createNFTRule(nfc, rd.inbound, dstPortOffset, stateEst, rd.addr, rd.cfg, 0, rd.chain, rd.contID)
+		if err != nil {
+			return nil, err
+		}
+		srcEstRule, err := createNFTRule(nfc, !rd.inbound, srcPortOffset, stateEst, rd.addr, rd.cfg, 0, rd.estChain, estContID)
+		if err != nil {
+			return nil, err
+		}
+		return append(rules, dstNewRule, dstEstRule, srcEstRule), nil
 	}
 
 	// If there is no log prefix set we can create one inbound rule and
@@ -929,17 +976,27 @@ func (r *RuleManager) createNFTRules(logger *zap.Logger, rd ruleDetails) []*nfta
 		if rd.inbound && rd.cfg.Verdict.Queue == rd.cfg.Verdict.InputEstQueue {
 			// if rule is inbound and queue and established inbound queue
 			// are the same, create one rule for inbound traffic
-			return append(rules,
-				createNFTRule(true, dstPortOffset, stateNewEst, rd.addr, rd.cfg, rd.cfg.Verdict.Queue, rd.chain, rd.contID),
-				createNFTRule(false, srcPortOffset, stateEst, rd.addr, rd.cfg, rd.cfg.Verdict.OutputEstQueue, rd.estChain, estContID),
-			)
+			newEstRule, err := createNFTRule(nfc, true, dstPortOffset, stateNewEst, rd.addr, rd.cfg, rd.cfg.Verdict.Queue, rd.chain, rd.contID)
+			if err != nil {
+				return nil, err
+			}
+			estRule, err := createNFTRule(nfc, false, srcPortOffset, stateEst, rd.addr, rd.cfg, rd.cfg.Verdict.OutputEstQueue, rd.estChain, estContID)
+			if err != nil {
+				return nil, err
+			}
+			return append(rules, newEstRule, estRule), nil
 		} else if !rd.inbound && rd.cfg.Verdict.Queue == rd.cfg.Verdict.OutputEstQueue {
 			// if rule is outbound and queue and established outbound queue
 			// are the same, create one rule for outbound traffic
-			return append(rules,
-				createNFTRule(false, dstPortOffset, stateNewEst, rd.addr, rd.cfg, rd.cfg.Verdict.Queue, rd.chain, rd.contID),
-				createNFTRule(true, srcPortOffset, stateEst, rd.addr, rd.cfg, rd.cfg.Verdict.InputEstQueue, rd.estChain, estContID),
-			)
+			newEstRule, err := createNFTRule(nfc, false, dstPortOffset, stateNewEst, rd.addr, rd.cfg, rd.cfg.Verdict.Queue, rd.chain, rd.contID)
+			if err != nil {
+				return nil, err
+			}
+			estRule, err := createNFTRule(nfc, true, srcPortOffset, stateEst, rd.addr, rd.cfg, rd.cfg.Verdict.InputEstQueue, rd.estChain, estContID)
+			if err != nil {
+				return nil, err
+			}
+			return append(rules, newEstRule, estRule), nil
 		}
 	}
 
@@ -948,25 +1005,41 @@ func (r *RuleManager) createNFTRules(logger *zap.Logger, rd ruleDetails) []*nfta
 	// or, logging was requested which means we need to create a
 	// separate rule for new traffic
 	if rd.inbound {
-		return append(rules,
-			createNFTRule(true, dstPortOffset, stateNew, rd.addr, rd.cfg, rd.cfg.Verdict.Queue, rd.chain, rd.contID),
-			createNFTRule(true, dstPortOffset, stateEst, rd.addr, rd.cfg, rd.cfg.Verdict.InputEstQueue, rd.chain, rd.contID),
-			createNFTRule(false, srcPortOffset, stateEst, rd.addr, rd.cfg, rd.cfg.Verdict.OutputEstQueue, rd.estChain, estContID),
-		)
+		dstNewRule, err := createNFTRule(nfc, true, dstPortOffset, stateNew, rd.addr, rd.cfg, rd.cfg.Verdict.Queue, rd.chain, rd.contID)
+		if err != nil {
+			return nil, err
+		}
+		dstEstRule, err := createNFTRule(nfc, true, dstPortOffset, stateEst, rd.addr, rd.cfg, rd.cfg.Verdict.InputEstQueue, rd.chain, rd.contID)
+		if err != nil {
+			return nil, err
+		}
+		srcEstRule, err := createNFTRule(nfc, false, srcPortOffset, stateEst, rd.addr, rd.cfg, rd.cfg.Verdict.OutputEstQueue, rd.estChain, estContID)
+		if err != nil {
+			return nil, err
+		}
+		return append(rules, dstNewRule, dstEstRule, srcEstRule), nil
 	}
 
 	// if rule is outbound and queue and established outbound queue
 	// are different, need to create separate rules for them;
 	// or, logging was requested which means we need to create a
 	// separate rule for new traffic
-	return append(rules,
-		createNFTRule(false, dstPortOffset, stateNew, rd.addr, rd.cfg, rd.cfg.Verdict.Queue, rd.chain, rd.contID),
-		createNFTRule(false, dstPortOffset, stateEst, rd.addr, rd.cfg, rd.cfg.Verdict.OutputEstQueue, rd.chain, rd.contID),
-		createNFTRule(true, srcPortOffset, stateEst, rd.addr, rd.cfg, rd.cfg.Verdict.InputEstQueue, rd.estChain, estContID),
-	)
+	dstNewRule, err := createNFTRule(nfc, false, dstPortOffset, stateNew, rd.addr, rd.cfg, rd.cfg.Verdict.Queue, rd.chain, rd.contID)
+	if err != nil {
+		return nil, err
+	}
+	dstEstRule, err := createNFTRule(nfc, false, dstPortOffset, stateEst, rd.addr, rd.cfg, rd.cfg.Verdict.OutputEstQueue, rd.chain, rd.contID)
+	if err != nil {
+		return nil, err
+	}
+	srcEstRule, err := createNFTRule(nfc, true, srcPortOffset, stateEst, rd.addr, rd.cfg, rd.cfg.Verdict.InputEstQueue, rd.estChain, estContID)
+	if err != nil {
+		return nil, err
+	}
+	return append(rules, dstNewRule, dstEstRule, srcEstRule), nil
 }
 
-func createNFTRule(inbound bool, portOffset, state uint32, addr []byte, cfg ruleConfig, queueNum uint16, chain *nftables.Chain, contID string) *nftables.Rule {
+func createNFTRule(nfc firewallClient, inbound bool, portOffset, state uint32, addr []byte, cfg ruleConfig, queueNum uint16, chain *nftables.Chain, contID string) (*nftables.Rule, error) {
 	addrOffset := srcAddrOffset
 	cfgAddrOffset := dstAddrOffset
 	if inbound {
@@ -977,7 +1050,6 @@ func createNFTRule(inbound bool, portOffset, state uint32, addr []byte, cfg rule
 	if cfg.Proto == udp {
 		proto = unix.IPPROTO_UDP
 	}
-
 	exprs := make([]expr.Any, 0, 15)
 	if cfg.IP.IsValid() {
 		if cfgAddr, ok := cfg.IP.Addr(); ok {
@@ -1008,22 +1080,81 @@ func createNFTRule(inbound bool, portOffset, state uint32, addr []byte, cfg rule
 			}
 		} else {
 			// should never happen if cfg.IP.IsValid is true
-			panic("invalid addrOrRange")
+			return nil, errors.New("invalid IP address")
 		}
 	} else if len(addr) != 0 {
 		exprs = append(exprs, matchIPExprs(addr, addrOffset)...)
 	}
+
 	if cfg.Proto != invalidProto {
 		exprs = append(exprs, matchProtoExprs(proto)...)
 	}
-	if cfg.Port != 0 {
-		exprs = append(exprs, matchPortExprs(cfg.Port, portOffset)...)
+
+	if len(cfg.DstPorts) != 0 {
+		if len(cfg.DstPorts) == 1 {
+			if cfg.DstPorts[0].single != 0 {
+				exprs = append(exprs, matchPortExprs(cfg.DstPorts[0].single, portOffset)...)
+			} else {
+				exprs = append(exprs, matchPortsExprs(cfg.DstPorts[0].interval, portOffset)...)
+			}
+		} else {
+			exprs = append(exprs, getPortExpr(portOffset))
+
+			var singlePorts []nftables.SetElement
+			for _, ports := range cfg.DstPorts {
+				if ports.single != 0 {
+					singlePorts = append(singlePorts, nftables.SetElement{
+						Key: binary.BigEndian.AppendUint16(nil, ports.single),
+					})
+				}
+			}
+			if len(singlePorts) != 0 {
+				set := &nftables.Set{
+					Table:     chain.Table,
+					Anonymous: true,
+					Constant:  true,
+					KeyType:   nftables.TypeInetService,
+				}
+				if err := nfc.AddSet(set, singlePorts); err != nil {
+					return nil, fmt.Errorf("error creating set: %w", err)
+				}
+				exprs = append(exprs, matchFromSetExpr(set))
+			}
+
+			var portIntervals []nftables.SetElement
+			for _, ports := range cfg.DstPorts {
+				if ports.single == 0 {
+					portIntervals = append(portIntervals, nftables.SetElement{
+						Key: binary.BigEndian.AppendUint16(nil, ports.interval.min),
+					})
+					portIntervals = append(portIntervals, nftables.SetElement{
+						Key:         binary.BigEndian.AppendUint16(nil, ports.interval.max),
+						IntervalEnd: true,
+					})
+				}
+			}
+			if len(portIntervals) != 0 {
+				set := &nftables.Set{
+					Table:     chain.Table,
+					Anonymous: true,
+					Constant:  true,
+					Interval:  true,
+					KeyType:   nftables.TypeInetService,
+				}
+				if err := nfc.AddSet(set, portIntervals); err != nil {
+					return nil, fmt.Errorf("error creating set: %w", err)
+				}
+				exprs = append(exprs, matchFromSetExpr(set))
+			}
+		}
 	}
+
 	exprs = append(exprs, matchConnStateExprs(state)...)
 	exprs = append(exprs, &expr.Counter{})
 	if state == stateNew && cfg.LogPrefix != "" {
 		exprs = append(exprs, logExpr(cfg.LogPrefix))
 	}
+
 	switch {
 	case cfg.Verdict.Chain != "":
 		exprs = append(exprs,
@@ -1049,7 +1180,7 @@ func createNFTRule(inbound bool, portOffset, state uint32, addr []byte, cfg rule
 		Chain:    chain,
 		Exprs:    exprs,
 		UserData: []byte(contID),
-	}
+	}, nil
 }
 
 func matchIPExprs(addr []byte, offset int) []expr.Any {
@@ -1114,20 +1245,51 @@ func matchProtoExprs(proto int) []expr.Any {
 
 func matchPortExprs(port uint16, offset uint32) []expr.Any {
 	return []expr.Any{
-		// [ payload load 2b @ transport header + ... => reg 1 ]
-		&expr.Payload{
-			OperationType: expr.PayloadLoad,
-			Len:           2,
-			Base:          expr.PayloadBaseTransportHeader,
-			Offset:        offset,
-			DestRegister:  1,
-		},
+		getPortExpr(offset),
 		// [ cmp eq reg 1 ... ]
 		&expr.Cmp{
 			Op:       expr.CmpOpEq,
 			Register: 1,
 			Data:     binary.BigEndian.AppendUint16(nil, port),
 		},
+	}
+}
+
+func matchPortsExprs(ports portInterval, offset uint32) []expr.Any {
+	return []expr.Any{
+		getPortExpr(offset),
+		// [ cmp gte reg 1 ... ]
+		&expr.Cmp{
+			Op:       expr.CmpOpGte,
+			Register: 1,
+			Data:     binary.BigEndian.AppendUint16(nil, ports.min),
+		},
+		// [ cmp lte reg 1 ... ]
+		&expr.Cmp{
+			Op:       expr.CmpOpLte,
+			Register: 1,
+			Data:     binary.BigEndian.AppendUint16(nil, ports.max),
+		},
+	}
+}
+
+func getPortExpr(offset uint32) expr.Any {
+	// [ payload load 2b @ transport header + ... => reg 1 ]
+	return &expr.Payload{
+		OperationType: expr.PayloadLoad,
+		Len:           2,
+		Base:          expr.PayloadBaseTransportHeader,
+		Offset:        offset,
+		DestRegister:  1,
+	}
+}
+
+func matchFromSetExpr(set *nftables.Set) expr.Any {
+	// [ lookup reg 1 set ... 0x0 ]
+	return &expr.Lookup{
+		SourceRegister: 1,
+		SetID:          set.ID,
+		SetName:        set.Name,
 	}
 }
 

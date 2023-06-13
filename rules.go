@@ -2,6 +2,8 @@ package whalewall
 
 import (
 	"bytes"
+	"strconv"
+	"strings"
 
 	"github.com/google/nftables"
 	"github.com/google/nftables/expr"
@@ -41,6 +43,52 @@ func rulesEqual(logger *zap.Logger, r1, r2 *nftables.Rule) bool {
 		// number of packets/bytes counted
 		if e1Ctr && e2Ctr {
 			continue
+		}
+
+		e1Lookup, e1LookupOk := r1.Exprs[i].(*expr.Lookup)
+		e2Lookup, e2LookupOk := r2.Exprs[i].(*expr.Lookup)
+		// expressions are not of same type, rules are different
+		if e1LookupOk != e2LookupOk {
+			return false
+		}
+		if e1LookupOk && e2LookupOk {
+			if e1Lookup.SourceRegister != e2Lookup.SourceRegister {
+				return false
+			}
+			if e1Lookup.DestRegister != e2Lookup.DestRegister {
+				return false
+			}
+			if e1Lookup.IsDestRegSet != e2Lookup.IsDestRegSet {
+				return false
+			}
+			if e1Lookup.Invert != e2Lookup.Invert {
+				return false
+			}
+
+			// Anonymous set names are set to "__set%d" initially and nftables
+			// will change the set name when the rule is created, so the same
+			// lookup expression before and after getting created can be slightly
+			// different. We can't know before the rule is created what the set
+			// name will be changed to, so if that's the only difference treat
+			// these expressions as the same.
+			if e1Lookup.SetName != e2Lookup.SetName {
+				if e1Lookup.SetName == "__set%d" {
+					if strings.HasPrefix(e2Lookup.SetName, "__set") {
+						if _, err := strconv.ParseUint(e2Lookup.SetName[5:], 10, 64); err == nil {
+							continue
+						}
+					}
+				}
+				if e2Lookup.SetName == "__set%d" {
+					if strings.HasPrefix(e1Lookup.SetName, "__set") {
+						if _, err := strconv.ParseUint(e1Lookup.SetName[5:], 10, 64); err == nil {
+							continue
+						}
+					}
+				}
+
+				return false
+			}
 		}
 
 		exprb1, err := expr.Marshal(byte(r1.Table.Family), r1.Exprs[i])

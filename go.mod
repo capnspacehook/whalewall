@@ -20,6 +20,7 @@ require (
 require (
 	github.com/google/go-cmp v0.5.9
 	github.com/matryer/is v1.4.1
+	github.com/mitchellh/copystructure v1.2.0
 )
 
 require (
@@ -35,6 +36,7 @@ require (
 	github.com/mattn/go-isatty v0.0.16 // indirect
 	github.com/mdlayher/netlink v1.6.2 // indirect
 	github.com/mdlayher/socket v0.2.3 // indirect
+	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/moby/term v0.0.0-20200312100748-672ec06f55cd // indirect
 	github.com/morikuni/aec v1.0.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect

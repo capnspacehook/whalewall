@@ -410,7 +410,8 @@ func TestRuleCreation(t *testing.T) {
 							rulesLabel: `
 output:
   - proto: tcp
-    port: 443`,
+    dst_ports:
+      - 443`,
 						},
 					},
 					NetworkSettings: &types.NetworkSettings{
@@ -465,6 +466,86 @@ output:
 			},
 		},
 		{
+			name: "allow HTTP, HTTPS outbound",
+			containers: []types.ContainerJSON{
+				{
+					ContainerJSONBase: &types.ContainerJSONBase{
+						ID:   cont1ID,
+						Name: "/" + cont1Name,
+					},
+					Config: &container.Config{
+						Labels: map[string]string{
+							enabledLabel: "true",
+							rulesLabel: `
+output:
+  - proto: tcp
+    dst_ports:
+      - 80
+      - 443`,
+						},
+					},
+					NetworkSettings: &types.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"default": {
+								Gateway:   gatewayAddr.String(),
+								IPAddress: cont1Addr.String(),
+							},
+						},
+					},
+				},
+			},
+			expectedRules: map[*nftables.Chain][]*nftables.Rule{
+				{
+					Name:  buildChainName(cont1Name, cont1ID),
+					Table: filterTable,
+				}: {
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchProtoExprs(unix.IPPROTO_TCP),
+							[]expr.Any{
+								getPortExpr(dstPortOffset),
+								matchFromSetExpr(&nftables.Set{
+									Name: anonSetName,
+								}),
+							},
+							matchConnStateExprs(stateNewEst),
+							[]expr.Any{
+								&expr.Counter{},
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchProtoExprs(unix.IPPROTO_TCP),
+							[]expr.Any{
+								getPortExpr(srcPortOffset),
+								matchFromSetExpr(&nftables.Set{
+									Name: anonSetName,
+								}),
+							},
+							matchConnStateExprs(stateEst),
+							[]expr.Any{
+								&expr.Counter{},
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					createDropRule(
+						&nftables.Chain{
+							Name:  buildChainName(cont1Name, cont1ID),
+							Table: filterTable,
+						},
+						cont1ID,
+					),
+				},
+			},
+		},
+		{
 			name: "allow HTTPS outbound to 1.1.1.1",
 			containers: []types.ContainerJSON{
 				{
@@ -479,7 +560,8 @@ output:
 output:
   - ip: 1.1.1.1
     proto: tcp
-    port: 443`,
+    dst_ports:
+      - 443`,
 						},
 					},
 					NetworkSettings: &types.NetworkSettings{
@@ -550,7 +632,8 @@ output:
 output:
   - ip: 192.168.1.0/24
     proto: udp
-    port: 53`,
+    dst_ports:
+      - 53`,
 						},
 					},
 					NetworkSettings: &types.NetworkSettings{
@@ -621,7 +704,8 @@ output:
 output:
   - log_prefix: "logger pfx"
     proto: tcp
-    port: 443`,
+    dst_ports:
+      - 443`,
 						},
 					},
 					NetworkSettings: &types.NetworkSettings{
@@ -703,7 +787,8 @@ output:
 							rulesLabel: `
 output:
   - proto: tcp
-    port: 443
+    dst_ports:
+      - 443
     verdict:
       queue: 1000`,
 						},
@@ -788,7 +873,8 @@ output:
 							rulesLabel: `
 output:
   - proto: tcp
-    port: 443
+    dst_ports:
+      - 443
     verdict:
       queue: 1000
       input_est_queue: 1001
@@ -879,7 +965,8 @@ output:
 							rulesLabel: `
 output:
   - proto: tcp
-    port: 443
+    dst_ports:
+      - 443
     verdict:
       queue: 1000
       input_est_queue: 1001
@@ -957,7 +1044,8 @@ output:
   - container: container2
     network: cont_net
     proto: udp
-    port: 9001`,
+    dst_ports:
+      - 9001`,
 						},
 					},
 					NetworkSettings: &types.NetworkSettings{
@@ -1060,7 +1148,8 @@ output:
   - container: container2
     network: cont_net
     proto: tcp
-    port: 202`,
+    dst_ports:
+      - 202`,
 						},
 					},
 					NetworkSettings: &types.NetworkSettings{
@@ -1085,7 +1174,8 @@ output:
   - container: container1
     network: cont_net
     proto: tcp
-    port: 101`,
+    dst_ports:
+      - 101`,
 						},
 					},
 					NetworkSettings: &types.NetworkSettings{
@@ -1814,7 +1904,7 @@ mapped_ports:
 			})
 			is.NoErr(mfc.Flush())
 			r.newFirewallClient = func() (firewallClient, error) {
-				return mfc, nil
+				return newMockFirewall(logger), nil
 			}
 
 			// create new database and base rules
@@ -1830,23 +1920,30 @@ mapped_ports:
 			// create new rules for containers then attempt to recreate
 			// rules and verify no new rules were added
 			for _, containerIsNew := range []bool{true, false} {
-				// create rules
-				for _, c := range tt.containers {
-					if !allContainersStarted {
-						dockerCli.containers = append(dockerCli.containers, c)
+				subTestName := "containers are new"
+				if !containerIsNew {
+					subTestName = "containers are not new"
+				}
+
+				t.Run(subTestName, func(t *testing.T) {
+					// create rules
+					for _, c := range tt.containers {
+						if !allContainersStarted {
+							dockerCli.containers = append(dockerCli.containers, c)
+						}
+
+						err := r.createContainerRules(context.Background(), c, containerIsNew)
+						is.NoErr(err)
 					}
 
-					err := r.createContainerRules(context.Background(), c, containerIsNew)
-					is.NoErr(err)
-				}
+					// check that created rules are what is expected
+					for chain, expectedRules := range tt.expectedRules {
+						rules, err := mfc.GetRules(chain.Table, chain)
+						is.NoErr(err)
 
-				// check that created rules are what is expected
-				for chain, expectedRules := range tt.expectedRules {
-					rules, err := mfc.GetRules(chain.Table, chain)
-					is.NoErr(err)
-
-					compareRules(t, comparer, chain.Name, expectedRules, rules)
-				}
+						compareRules(t, comparer, chain.Name, expectedRules, rules)
+					}
+				})
 			}
 
 			if clearRules {
@@ -1855,15 +1952,16 @@ mapped_ports:
 				err := r.clearRules(context.Background())
 				is.NoErr(err)
 
-				is.True(len(mfc.tables[filterTableName].sets) == 0)
+				is.NoErr(mfc.Flush())
+				is.True(len(mfc.tables[filterTableName].Sets) == 0)
 				chains := maps.Values(mfc.chains)
 				slices.SortFunc(chains, func(a, b chain) bool {
-					return a.chain.Name < b.chain.Name
+					return a.Chain.Name < b.Chain.Name
 				})
 				is.True(len(chains) == 3)
-				is.True(chains[0].chain.Name == dockerChainName)
-				is.True(chains[1].chain.Name == inputChainName)
-				is.True(chains[2].chain.Name == outputChainName)
+				is.True(chains[0].Chain.Name == dockerChainName)
+				is.True(chains[1].Chain.Name == inputChainName)
+				is.True(chains[2].Chain.Name == outputChainName)
 			} else {
 				// check that deleting container rules removes all rules
 				// of that container
@@ -1880,20 +1978,21 @@ mapped_ports:
 					_, err = checkMfc.GetRules(filterTable, chain)
 					is.True(errors.Is(err, syscall.ENOENT))
 				}
-				is.True(len(mfc.tables[filterTableName].sets[containerAddrSetName]) == 0)
+				is.NoErr(mfc.Flush())
+				is.True(len(mfc.tables[filterTableName].Sets[containerAddrSetName]) == 0)
 			}
 		}
 	}
 
 	for _, tt := range tests {
 		if len(tt.containers) == 1 {
-			t.Run(tt.name+" | delete container rules", testCreatingRules(tt, true, false))
-			t.Run(tt.name+" | clear all rules", testCreatingRules(tt, true, true))
+			t.Run(tt.name+"/delete container rules", testCreatingRules(tt, true, false))
+			t.Run(tt.name+"/clear all rules", testCreatingRules(tt, true, true))
 		} else {
-			t.Run(tt.name+" | all containers started | delete container rules", testCreatingRules(tt, true, false))
-			t.Run(tt.name+" | all containers started | clear all rules", testCreatingRules(tt, true, true))
-			t.Run(tt.name+" | one container at a time | delete container rules", testCreatingRules(tt, false, false))
-			t.Run(tt.name+" | one container at a time | clear all rules", testCreatingRules(tt, false, true))
+			t.Run(tt.name+"/all containers started/delete container rules", testCreatingRules(tt, true, false))
+			t.Run(tt.name+"/all containers started/clear all rules", testCreatingRules(tt, true, true))
+			t.Run(tt.name+"/one container at a time/delete container rules", testCreatingRules(tt, false, false))
+			t.Run(tt.name+"/one container at a time/clear all rules", testCreatingRules(tt, false, true))
 		}
 	}
 }
@@ -1913,11 +2012,11 @@ output:
 - container: container2
   network: cont_net
   proto: tcp
-  port: 201
+  dst_ports: [201]
 - container: container2
   network: cont_net
   proto: tcp
-  port: 202`,
+  dst_ports: [202]`,
 				},
 			},
 			NetworkSettings: &types.NetworkSettings{
@@ -1978,7 +2077,7 @@ output:
 	})
 	is.NoErr(mfc.Flush())
 	r.newFirewallClient = func() (firewallClient, error) {
-		return mfc, nil
+		return newMockFirewall(logger), nil
 	}
 
 	// create new database and base rules
@@ -2077,9 +2176,9 @@ func TestCancelingCreation(t *testing.T) {
 				rulesLabel: `
 output:
 - proto: tcp
-  port: 80
+  dst_ports: [80]
 - proto: tcp
-  port: 443`,
+  dst_ports: [443]`,
 			},
 		},
 		NetworkSettings: &types.NetworkSettings{
@@ -2130,7 +2229,7 @@ output:
 	})
 	is.NoErr(mfc.Flush())
 	r.newFirewallClient = func() (firewallClient, error) {
-		return mfc, nil
+		return newMockFirewall(logger), nil
 	}
 
 	// create new database and base rules
