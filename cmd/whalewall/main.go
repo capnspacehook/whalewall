@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -16,6 +18,7 @@ import (
 	llsyscall "github.com/landlock-lsm/go-landlock/landlock/syscall"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/sys/unix"
 
 	"github.com/capnspacehook/whalewall"
 )
@@ -60,6 +63,22 @@ func mainRetCode() int {
 	if err != nil {
 		log.Printf("error creating logger: %v", err)
 		return 1
+	}
+
+	// check if kernel version is new enough to support used nftables features
+	var uname unix.Utsname
+	if err := unix.Uname(&uname); err != nil {
+		logger.Error("error getting kernel version", zap.Error(err))
+	} else {
+		kernelVer := parseCStr(uname.Release[:])
+		var major, minor int
+		_, err := fmt.Fscanf(strings.NewReader(kernelVer), "%d.%d", &major, &minor)
+		if err != nil {
+			logger.Error("error parsing kernel version", zap.Error(err))
+			// minimum kernel version is around 5.10
+		} else if major < 5 || (major == 5 && minor < 10) {
+			logger.Sugar().Warnf("current kernel version %q is unsupported, 5.10 or greater is required; whalewall will probably not work correctly", kernelVer)
+		}
 	}
 
 	// create rule manager and drop unneeded privileges
@@ -109,6 +128,9 @@ func mainRetCode() int {
 	// start managing firewall rules
 	if err = r.Start(ctx); err != nil {
 		logger.Error("error starting", zap.Error(err))
+		if errors.Is(err, syscall.EPERM) {
+			logger.Info("whalewall seems to lack required permissions, is the NET_ADMIN capability set?")
+		}
 		return 1
 	}
 
@@ -142,19 +164,17 @@ func restrictPrivileges(logger *zap.Logger, sqliteFile, logPath string) bool {
 	}
 	// Go's networking stack/runtime will read the following files if
 	// they are available, which they may not be if we are in a container
-	roFiles := []string{
-		"/etc/protocols",
-		"/etc/services",
-		"/etc/localtime",
-		"/etc/nsswitch.conf",
-		"/etc/resolv.conf",
-		"/etc/hosts",
-	}
-	for _, file := range roFiles {
-		allowedPaths = append(allowedPaths,
-			landlock.PathAccess(llsyscall.AccessFSReadFile, file).IgnoreIfMissing(),
-		)
-	}
+	allowedPaths = append(allowedPaths,
+		landlock.PathAccess(
+			llsyscall.AccessFSReadFile,
+			"/etc/protocols",
+			"/etc/services",
+			"/etc/localtime",
+			"/etc/nsswitch.conf",
+			"/etc/resolv.conf",
+			"/etc/hosts",
+		).IgnoreIfMissing(),
+	)
 
 	err := landlock.V1.RestrictPaths(
 		allowedPaths...,
@@ -178,4 +198,16 @@ func restrictPrivileges(logger *zap.Logger, sqliteFile, logPath string) bool {
 	logger.Info("applied seccomp filters", zap.Int("syscalls.allowed", numAllowedSyscalls))
 
 	return true
+}
+
+func parseCStr(cstr []byte) string {
+	p := make([]byte, 0, len(cstr))
+	for _, c := range cstr {
+		if c == 0x00 {
+			break
+		}
+		p = append(p, c)
+	}
+
+	return string(p)
 }
