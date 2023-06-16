@@ -64,11 +64,15 @@ func (r ruleConfig) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 		enc.AddString("container", r.Container)
 	}
 	enc.AddString("proto", r.Proto.String())
-	if err := enc.AddArray("src_ports", portsList(r.SrcPorts)); err != nil {
-		return err
+	if len(r.SrcPorts) != 0 {
+		if err := enc.AddArray("src_ports", portsList(r.SrcPorts)); err != nil {
+			return err
+		}
 	}
-	if err := enc.AddArray("dst_ports", portsList(r.DstPorts)); err != nil {
-		return err
+	if len(r.DstPorts) != 0 {
+		if err := enc.AddArray("dst_ports", portsList(r.DstPorts)); err != nil {
+			return err
+		}
 	}
 	if err := enc.AddObject("verdict", r.Verdict); err != nil {
 		return err
