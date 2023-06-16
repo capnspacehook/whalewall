@@ -439,23 +439,26 @@ func (r *RuleManager) populateOutputRules(ctx context.Context, tx database.TX, c
 
 			if !found {
 				// we need to add rules to this container's chain, but it
-				// hasn't been processed yet; add the rule to the database
-				// so when we are processing this container, this rule will
-				// be created
-				var buf bytes.Buffer
-				encoder := gob.NewEncoder(&buf)
-				if err := encoder.Encode(ruleCfg); err != nil {
-					return fmt.Errorf("error encoding waiting container rule: %w", err)
-				}
-				err := tx.AddWaitingContainerRule(ctx, database.AddWaitingContainerRuleParams{
-					SrcContainerID:   id,
-					DstContainerName: ruleCfg.Container,
-					Rule:             buf.Bytes(),
-				})
-				if err != nil {
-					return fmt.Errorf("error adding waiting container rule to database: %w", err)
-				}
+				// hasn't been processed yet; wait until this container
+				// is processed to create the rules
 				cfg.Output[i].skip = true
+			}
+			// Add the rule to the database so when we are processing
+			// this container, this rule will be created. This is done
+			// even when the container has been processed so future
+			// rule creation will be idempotent.
+			var buf bytes.Buffer
+			encoder := gob.NewEncoder(&buf)
+			if err := encoder.Encode(ruleCfg); err != nil {
+				return fmt.Errorf("error encoding waiting container rule: %w", err)
+			}
+			err := tx.AddWaitingContainerRule(ctx, database.AddWaitingContainerRuleParams{
+				SrcContainerID:   id,
+				DstContainerName: ruleCfg.Container,
+				Rule:             buf.Bytes(),
+			})
+			if err != nil {
+				return fmt.Errorf("error adding waiting container rule to database: %w", err)
 			}
 		}
 	}
@@ -516,6 +519,7 @@ func buildChainName(name, id string) string {
 	return fmt.Sprintf("%s%s-%s", chainPrefix, name, id[:12])
 }
 
+// TODO: avoid creating almost duplicate rules as output rules
 // createPortMappingRules adds nftables rules to allow or deny access to
 // mapped ports.
 func (r *RuleManager) createPortMappingRules(nfc firewallClient, logger *zap.Logger, container types.ContainerJSON, contName string, mappedPortsCfg mappedPorts, addrs map[string][]byte, chain *nftables.Chain) ([]*nftables.Rule, error) {
@@ -911,9 +915,9 @@ func (r ruleDetails) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 	if r.estChain != nil {
 		enc.AddString("est_chain", r.estChain.Name)
 	}
-	enc.AddString("cont_id", r.contID)
+	enc.AddString("cont_id", r.contID[:12])
 	if r.estContID != "" {
-		enc.AddString("est_cont_id", r.estContID)
+		enc.AddString("est_cont_id", r.estContID[:12])
 	}
 
 	return nil
@@ -921,7 +925,7 @@ func (r ruleDetails) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 
 // createNFTRules returns a slice of [*nftables.Rule] described by rd.
 func createNFTRules(nfc firewallClient, logger *zap.Logger, rd ruleDetails) ([]*nftables.Rule, error) {
-	logger.Debug("creating rule", zap.Object("rule", rd))
+	logger.Debug("generating rule", zap.Object("rule", rd))
 
 	rules := make([]*nftables.Rule, 0, 3)
 	estContID := rd.contID

@@ -2062,7 +2062,7 @@ mapped_ports:
 		return rulesEqual(logger, r1, r2)
 	}
 
-	testCreatingRules := func(tt ruleCreationTest, allContainersStarted bool, clearRules bool) func(*testing.T) {
+	testCreatingRules := func(tt ruleCreationTest, allContainersStarted, clearRules bool) func(*testing.T) {
 		return func(t *testing.T) {
 			is := is.New(t)
 
@@ -2072,7 +2072,7 @@ mapped_ports:
 
 			var dockerCli *mockDockerClient
 			if allContainersStarted {
-				dockerCli = newMockDockerClient(tt.containers)
+				dockerCli = newMockDockerClient(clone(tt.containers))
 			} else {
 				dockerCli = newMockDockerClient(nil)
 			}
@@ -2110,12 +2110,16 @@ mapped_ports:
 				subTestName := "containers are new"
 				if !containerIsNew {
 					subTestName = "containers are not new"
+
+					if len(tt.containers) > 1 {
+						reverse(dockerCli.containers)
+					}
 				}
 
 				t.Run(subTestName, func(t *testing.T) {
 					// create rules
 					for _, c := range tt.containers {
-						if !allContainersStarted {
+						if !allContainersStarted && len(dockerCli.containers) < len(tt.containers) {
 							dockerCli.containers = append(dockerCli.containers, c)
 						}
 
@@ -2172,15 +2176,33 @@ mapped_ports:
 	}
 
 	for _, tt := range tests {
-		if len(tt.containers) == 1 {
-			t.Run(tt.name+"/delete container rules", testCreatingRules(tt, true, false))
-			t.Run(tt.name+"/clear all rules", testCreatingRules(tt, true, true))
-		} else {
-			t.Run(tt.name+"/all containers started/delete container rules", testCreatingRules(tt, true, false))
-			t.Run(tt.name+"/all containers started/clear all rules", testCreatingRules(tt, true, true))
-			t.Run(tt.name+"/one container at a time/delete container rules", testCreatingRules(tt, false, false))
-			t.Run(tt.name+"/one container at a time/clear all rules", testCreatingRules(tt, false, true))
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			if len(tt.containers) == 1 {
+				t.Run("delete container rules", testCreatingRules(tt, true, false))
+				t.Run("clear all rules", testCreatingRules(tt, true, true))
+			} else {
+				runTests := func(t *testing.T) {
+					t.Run("all containers started/delete container rules", testCreatingRules(tt, true, false))
+					t.Run("all containers started/clear all rules", testCreatingRules(tt, true, true))
+					t.Run("one container at a time/delete container rules", testCreatingRules(tt, false, false))
+					t.Run("one container at a time/clear all rules", testCreatingRules(tt, false, true))
+				}
+
+				runTests(t)
+				// run same tests with containers in reverse order
+				reverse(tt.containers)
+				t.Run("container order reversed", func(t *testing.T) {
+					// reverse order of all expected rules except the
+					// drop rule (which will always be last)
+					for chain, rules := range tt.expectedRules {
+						reverse(rules[:len(rules)-1])
+						tt.expectedRules[chain] = rules
+					}
+
+					runTests(t)
+				})
+			}
+		})
 	}
 }
 
@@ -2322,6 +2344,141 @@ output:
 	cont2RulesAfter, err := mfc.GetRules(filterTable, cont2Chain)
 	is.NoErr(err)
 
+	compareRules(t, comparer, cont1ChainName, cont1RulesBefore, cont1RulesAfter)
+	compareRules(t, comparer, cont2ChainName, cont2RulesBefore, cont2RulesAfter)
+}
+
+func TestCreationIdempotency(t *testing.T) {
+	containers := []types.ContainerJSON{
+		{
+			ContainerJSONBase: &types.ContainerJSONBase{
+				ID:   cont2ID,
+				Name: "/" + cont2Name,
+			},
+			Config: &container.Config{
+				Labels: map[string]string{
+					enabledLabel: "true",
+				},
+			},
+			NetworkSettings: &types.NetworkSettings{
+				Networks: map[string]*network.EndpointSettings{
+					"cont_net": {
+						Gateway:   gatewayAddr.String(),
+						IPAddress: cont2Addr.String(),
+					},
+				},
+			},
+		},
+		{
+			ContainerJSONBase: &types.ContainerJSONBase{
+				ID:   cont1ID,
+				Name: "/" + cont1Name,
+			},
+			Config: &container.Config{
+				Labels: map[string]string{
+					enabledLabel: "true",
+					rulesLabel: `
+output:
+  - container: container2
+    network: cont_net
+    proto: udp
+    dst_ports:
+      - 9001`,
+				},
+			},
+			NetworkSettings: &types.NetworkSettings{
+				Networks: map[string]*network.EndpointSettings{
+					"cont_net": {
+						Gateway:   gatewayAddr.String(),
+						IPAddress: cont1Addr.String(),
+					},
+				},
+			},
+		},
+	}
+
+	is := is.New(t)
+	logger, err := zap.NewDevelopment()
+	is.NoErr(err)
+
+	comparer := func(r1, r2 *nftables.Rule) bool {
+		return rulesEqual(logger, r1, r2)
+	}
+
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	r, err := NewRuleManager(context.Background(), logger, dbFile, defaultTimeout)
+	is.NoErr(err)
+
+	dockerCli := newMockDockerClient(nil)
+	r.newDockerClient = func() (dockerClient, error) {
+		return dockerCli, nil
+	}
+
+	// create mock nftables client and add required prerequisite
+	// DOCKER-USER chain
+	mfc := newMockFirewall(logger)
+	mfc.AddTable(filterTable)
+	mfc.AddChain(&nftables.Chain{
+		Name:  dockerChainName,
+		Table: filterTable,
+		Type:  nftables.ChainTypeFilter,
+	})
+	is.NoErr(mfc.Flush())
+	r.newFirewallClient = func() (firewallClient, error) {
+		return newMockFirewall(logger), nil
+	}
+
+	// create new database and base rules
+	err = r.init(context.Background())
+	is.NoErr(err)
+	err = r.createBaseRules()
+	is.NoErr(err)
+	t.Cleanup(func() {
+		err := r.clearRules(context.Background())
+		is.NoErr(err)
+	})
+
+	// create rules
+	for _, c := range containers {
+		dockerCli.containers = append(dockerCli.containers, c)
+		err := r.createContainerRules(context.Background(), c, true)
+		is.NoErr(err)
+	}
+
+	cont1ChainName := buildChainName(cont1Name, cont1ID)
+	cont1Chain := &nftables.Chain{
+		Table: filterTable,
+		Name:  cont1ChainName,
+	}
+	cont1RulesBefore, err := mfc.GetRules(filterTable, cont1Chain)
+	is.NoErr(err)
+	is.True(len(cont1RulesBefore) == 2)
+
+	cont2ChainName := buildChainName(cont2Name, cont2ID)
+	cont2Chain := &nftables.Chain{
+		Table: filterTable,
+		Name:  cont2ChainName,
+	}
+	cont2RulesBefore, err := mfc.GetRules(filterTable, cont2Chain)
+	is.NoErr(err)
+	is.True(len(cont2RulesBefore) == 2)
+
+	// recreate rules in opposite container order
+	reverse(containers)
+	for _, c := range containers {
+		err := r.createContainerRules(context.Background(), c, false)
+		is.NoErr(err)
+	}
+
+	cont1RulesAfter, err := mfc.GetRules(filterTable, cont1Chain)
+	is.NoErr(err)
+	is.True(len(cont1RulesAfter) == 2)
+
+	cont2RulesAfter, err := mfc.GetRules(filterTable, cont2Chain)
+	is.NoErr(err)
+	is.True(len(cont2RulesAfter) == 2)
+
+	// ensure rules of both containers are the same as before
 	compareRules(t, comparer, cont1ChainName, cont1RulesBefore, cont1RulesAfter)
 	compareRules(t, comparer, cont2ChainName, cont2RulesBefore, cont2RulesAfter)
 }
@@ -2534,4 +2691,10 @@ func slicesJoin[T any](s ...[]T) (ret []T) {
 	}
 
 	return ret
+}
+
+func reverse[E any](s []E) {
+	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
+		s[i], s[j] = s[j], s[i]
+	}
 }
