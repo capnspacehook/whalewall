@@ -20,7 +20,7 @@ func (r *RuleManager) containerExists(ctx context.Context, db database.Querier, 
 	return exists == 1, nil
 }
 
-func (r *RuleManager) addContainer(ctx context.Context, tx database.TX, id, name, service string, addrs map[string][]byte, estContainers map[string]struct{}) error {
+func (r *RuleManager) addContainerInfo(ctx context.Context, tx database.TX, id, name, service string, addrs map[string][]byte, estContainers map[string]struct{}) error {
 	for _, addr := range addrs {
 		err := tx.AddContainerAddr(ctx, addr, id)
 		if err != nil {

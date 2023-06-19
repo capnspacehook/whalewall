@@ -270,7 +270,7 @@ func startFunc(t *testing.T, is *is.I, tempDir string) func() {
 	logger.Info("starting whalewall")
 	ctx, cancel := context.WithCancel(context.Background())
 	dbFile := filepath.Join(tempDir, "db.sqlite")
-	r, err := NewRuleManager(ctx, logger, dbFile, defaultTimeout)
+	r, err := NewRuleManager(ctx, logger, dbFile, defaultTimeout, time.Minute)
 	is.NoErr(err)
 	err = r.Start(ctx)
 	is.NoErr(err)
@@ -2335,7 +2335,7 @@ mapped_ports:
 			is := is.New(t)
 
 			dbFile := filepath.Join(t.TempDir(), "db.sqlite")
-			r, err := NewRuleManager(context.Background(), logger, dbFile, defaultTimeout)
+			r, err := NewRuleManager(context.Background(), logger, dbFile, defaultTimeout, defaultTimeout)
 			is.NoErr(err)
 
 			var dockerCli *mockDockerClient
@@ -2559,7 +2559,7 @@ output:
 	}
 
 	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
-	r, err := NewRuleManager(context.Background(), logger, dbFile, defaultTimeout)
+	r, err := NewRuleManager(context.Background(), logger, dbFile, defaultTimeout, time.Minute)
 	is.NoErr(err)
 
 	dockerCli := newMockDockerClient(nil)
@@ -2701,7 +2701,7 @@ output:
 	}
 
 	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
-	r, err := NewRuleManager(context.Background(), logger, dbFile, defaultTimeout)
+	r, err := NewRuleManager(context.Background(), logger, dbFile, defaultTimeout, time.Minute)
 	is.NoErr(err)
 
 	dockerCli := newMockDockerClient(nil)
@@ -2838,7 +2838,7 @@ output:
 	is.NoErr(err)
 
 	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
-	r, err := NewRuleManager(context.Background(), logger, dbFile, defaultTimeout)
+	r, err := NewRuleManager(context.Background(), logger, dbFile, defaultTimeout, time.Minute)
 	is.NoErr(err)
 
 	// configure database to pause before committing so we can cancel
