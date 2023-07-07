@@ -3,7 +3,7 @@ module github.com/capnspacehook/whalewall
 go 1.19
 
 require (
-	github.com/docker/docker v24.0.2+incompatible
+	github.com/docker/docker v24.0.3+incompatible
 	github.com/docker/go-connections v0.4.0
 	github.com/google/nftables v0.0.0-20221015190445-4f5cd5826fbd
 	github.com/landlock-lsm/go-landlock v0.0.0-20230212201647-821adaecc1a5
