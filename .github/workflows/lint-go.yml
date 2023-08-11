@@ -21,7 +21,7 @@ jobs:
       - name: Export constant environmental variables
         uses: cardinalby/export-env-action@v2
         with:
-          envFile: .github/workflows/constants.env
+          envFile: .github/constants.env
 
       - name: Install Go
         uses: actions/setup-go@v4
@@ -50,7 +50,7 @@ jobs:
       - name: Export constant environmental variables
         uses: cardinalby/export-env-action@v2
         with:
-          envFile: .github/workflows/constants.env
+          envFile: .github/constants.env
 
       - name: Install Go
         uses: actions/setup-go@v4
@@ -67,8 +67,6 @@ jobs:
   golangci-lint:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    permissions:
-      pull-requests: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -76,7 +74,7 @@ jobs:
       - name: Export constant environmental variables
         uses: cardinalby/export-env-action@v2
         with:
-          envFile: .github/workflows/constants.env
+          envFile: .github/constants.env
 
       - name: Install Go
         uses: actions/setup-go@v4
@@ -87,5 +85,3 @@ jobs:
 
       - name: Lint with golangci-lint
         uses: golangci/golangci-lint-action@v3.6.0
-        with:
-          only-new-issues: true
