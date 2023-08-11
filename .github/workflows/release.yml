@@ -24,7 +24,7 @@ jobs:
       - name: Export constant environmental variables
         uses: cardinalby/export-env-action@v2
         with:
-          envFile: .github/workflows/constants.env
+          envFile: .github/constants.env
 
       - name: Checkout tags
         run: git fetch --force --tags
