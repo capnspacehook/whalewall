@@ -5,12 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 	"strconv"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go4.org/netipx"
-	"golang.org/x/exp/slices"
 )
 
 type config struct {

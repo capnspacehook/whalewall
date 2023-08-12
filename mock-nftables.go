@@ -3,6 +3,7 @@ package whalewall
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -10,7 +11,6 @@ import (
 	"github.com/google/nftables/expr"
 	"github.com/mitchellh/copystructure"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 const anonSetName = "__set%d"

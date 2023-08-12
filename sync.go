@@ -3,11 +3,11 @@ package whalewall
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 	"gopkg.in/yaml.v3"
 )
 
@@ -23,9 +23,15 @@ func (r *RuleManager) syncContainers(ctx context.Context) error {
 		return fmt.Errorf("error listing containers: %w", err)
 	}
 	// sort containers so those that don't have dependencies go first
-	slices.SortFunc(containers, func(a, b types.Container) bool {
-		_, ok := a.Labels[composeDependsLabel]
-		return ok
+	slices.SortFunc(containers, func(a, b types.Container) int {
+		_, aHasLabels := a.Labels[composeDependsLabel]
+		_, bHasLabels := b.Labels[composeDependsLabel]
+		if aHasLabels == bHasLabels {
+			return 0
+		} else if !aHasLabels && bHasLabels {
+			return -1
+		}
+		return 1
 	})
 
 	for _, c := range containers {
