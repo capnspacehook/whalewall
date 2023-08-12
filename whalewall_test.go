@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sync"
 	"syscall"
 	"testing"
@@ -28,7 +29,6 @@ import (
 	"go.uber.org/zap"
 	"go4.org/netipx"
 	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sys/unix"
 )
 
@@ -2146,8 +2146,13 @@ mapped_ports:
 				is.NoErr(mfc.Flush())
 				is.True(len(mfc.tables[filterTableName].Sets) == 0)
 				chains := maps.Values(mfc.chains)
-				slices.SortFunc(chains, func(a, b chain) bool {
-					return a.Chain.Name < b.Chain.Name
+				slices.SortFunc(chains, func(a, b chain) int {
+					if a.Chain.Name == b.Chain.Name {
+						return 0
+					} else if a.Chain.Name < b.Chain.Name {
+						return -1
+					}
+					return 1
 				})
 				is.True(len(chains) == 3)
 				is.True(chains[0].Chain.Name == dockerChainName)

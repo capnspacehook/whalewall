@@ -3,11 +3,11 @@ package whalewall
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/events"
-	"golang.org/x/exp/slices"
 )
 
 type dockerClient interface {
