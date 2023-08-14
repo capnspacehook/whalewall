@@ -21,11 +21,17 @@ jobs:
           envFile: .github/constants.env
 
       - name: Install Go
+        id: install-go
         uses: actions/setup-go@v4
         with:
           go-version: ${{ env.GO_VERSION }}.x
           check-latest: true
-          cache: true
+
+      - name: Load cached actionlint binary
+        uses: actions/cache@v3
+        with:
+          path: ~/go/bin
+          key: ${{ steps.install-go.outputs.go-version }}
 
       - name: Lint workflow files
         run: |

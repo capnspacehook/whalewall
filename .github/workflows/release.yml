@@ -34,7 +34,6 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}.x
           check-latest: true
-          cache: true
 
       - name: Install cosign
         uses: sigstore/cosign-installer@main

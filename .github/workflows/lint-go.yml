@@ -28,7 +28,6 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}.x
           check-latest: true
-          cache: true
 
       - name: Ensure go.mod was tidied
         run: |
@@ -57,7 +56,6 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}.x
           check-latest: true
-          cache: true
 
       - name: Lint with staticcheck
         uses: dominikh/staticcheck-action@v1.3.0
@@ -81,7 +79,6 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}.x
           check-latest: true
-          cache: true
 
       - name: Lint with golangci-lint
         uses: golangci/golangci-lint-action@v3.6.0

@@ -26,11 +26,22 @@ jobs:
           envFile: .github/constants.env
 
       - name: Install Go
+        id: install-go
         uses: actions/setup-go@v4
         with:
           go-version: ${{ env.GO_VERSION }}.x
           check-latest: true
-          cache: true
+
+      - name: Get cache key
+        id: cache-key
+        run: |
+          echo "cmd-hash=$(go generate -n | sha256sum | cut -d ' ' -f 1)" >> "${GITHUB_OUTPUT}"
+
+      - name: Load cached code-gen binaries
+        uses: actions/cache@v3
+        with:
+          path: ~/go/bin
+          key: ${{ steps.install-go.outputs.go-version }}-${{ steps.cache-key.outputs.cmd-hash }}
 
       - name: Ensure 'go generate' is clean
         run: |

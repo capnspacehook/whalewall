@@ -29,7 +29,6 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}.x
           check-latest: true
-          cache: true
 
       # the test is compiled and run as root so that whalewall can
       # interface with nftables, which is a privileged operation
@@ -54,7 +53,6 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}.x
           check-latest: true
-          cache: true
 
       # run the integration tests but use a binary to create rules
       # to test with landlock and seccomp filters active
@@ -92,7 +90,6 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}.x
           check-latest: true
-          cache: true
 
       # run the integration tests but use a container to create rules
       # to test with landlock and seccomp filters active
