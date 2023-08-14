@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/capnspacehook/whalewall/database"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
@@ -30,6 +29,8 @@ import (
 	"go4.org/netipx"
 	"golang.org/x/exp/maps"
 	"golang.org/x/sys/unix"
+
+	"github.com/capnspacehook/whalewall/database"
 )
 
 const defaultTimeout = 3 * time.Second
@@ -42,6 +43,8 @@ var (
 )
 
 func TestIntegration(t *testing.T) {
+	t.Parallel()
+
 	is := is.New(t)
 
 	checkFirewallRules := func() {
@@ -180,6 +183,8 @@ func TestIntegration(t *testing.T) {
 }
 
 func startWhalewall(t *testing.T, is *is.I, tempDir string) func() {
+	t.Helper()
+
 	var stop func()
 	var stopOnce sync.Once
 
@@ -189,7 +194,7 @@ func startWhalewall(t *testing.T, is *is.I, tempDir string) func() {
 	case *containerTests:
 		stop = startContainer(t, is, tempDir)
 	default:
-		stop = startFunc(is, tempDir)
+		stop = startFunc(t, is, tempDir)
 	}
 
 	return func() {
@@ -198,6 +203,8 @@ func startWhalewall(t *testing.T, is *is.I, tempDir string) func() {
 }
 
 func startBinary(t *testing.T, is *is.I, tempDir string) func() {
+	t.Helper()
+
 	wwCmd := exec.Command(*whalewallBinary, "-debug", "-d", tempDir)
 	wwCmd.Stdout = os.Stdout
 	wwCmd.Stderr = os.Stderr
@@ -220,6 +227,8 @@ func startBinary(t *testing.T, is *is.I, tempDir string) func() {
 }
 
 func startContainer(t *testing.T, is *is.I, tempDir string) func() {
+	t.Helper()
+
 	dockerCmd := exec.Command(
 		"docker",
 		"run",
@@ -252,7 +261,9 @@ func startContainer(t *testing.T, is *is.I, tempDir string) func() {
 	}
 }
 
-func startFunc(is *is.I, tempDir string) func() {
+func startFunc(t *testing.T, is *is.I, tempDir string) func() {
+	t.Helper()
+
 	logger, err := zap.NewDevelopment()
 	is.NoErr(err)
 
@@ -272,6 +283,8 @@ func startFunc(is *is.I, tempDir string) func() {
 }
 
 func portOpen(t *testing.T, container, host string, port uint16, udp bool) bool {
+	t.Helper()
+
 	var udpFlag string
 	if udp {
 		udpFlag = "-sU"
@@ -283,6 +296,8 @@ func portOpen(t *testing.T, container, host string, port uint16, udp bool) bool 
 }
 
 func runCmd(t *testing.T, container, command string) int {
+	t.Helper()
+
 	args := []string{
 		"docker",
 		"compose",
@@ -299,6 +314,8 @@ func runCmd(t *testing.T, container, command string) int {
 }
 
 func run(t *testing.T, args ...string) int {
+	t.Helper()
+
 	t.Logf("running %v", args)
 
 	cmd := exec.Command(args[0], args[1:]...)
@@ -352,6 +369,8 @@ var (
 )
 
 func TestRuleCreation(t *testing.T) {
+	t.Parallel()
+
 	type ruleCreationTest struct {
 		name          string
 		containers    []types.ContainerJSON
@@ -2064,6 +2083,8 @@ mapped_ports:
 
 	testCreatingRules := func(tt ruleCreationTest, allContainersStarted, clearRules bool) func(*testing.T) {
 		return func(t *testing.T) {
+			t.Helper()
+
 			is := is.New(t)
 
 			dbFile := filepath.Join(t.TempDir(), "db.sqlite")
@@ -2181,12 +2202,17 @@ mapped_ports:
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			if len(tt.containers) == 1 {
 				t.Run("delete container rules", testCreatingRules(tt, true, false))
 				t.Run("clear all rules", testCreatingRules(tt, true, true))
 			} else {
 				runTests := func(t *testing.T) {
+					t.Helper()
+
 					t.Run("all containers started/delete container rules", testCreatingRules(tt, true, false))
 					t.Run("all containers started/clear all rules", testCreatingRules(tt, true, true))
 					t.Run("one container at a time/delete container rules", testCreatingRules(tt, false, false))
@@ -2212,6 +2238,8 @@ mapped_ports:
 }
 
 func TestDeletingContainers(t *testing.T) {
+	t.Parallel()
+
 	containers := []types.ContainerJSON{
 		{
 			ContainerJSONBase: &types.ContainerJSONBase{
@@ -2354,6 +2382,8 @@ output:
 }
 
 func TestCreationIdempotency(t *testing.T) {
+	t.Parallel()
+
 	containers := []types.ContainerJSON{
 		{
 			ContainerJSONBase: &types.ContainerJSONBase{
@@ -2514,6 +2544,8 @@ func (t *txOnCommit) Commit() error {
 }
 
 func TestCancelingCreation(t *testing.T) {
+	t.Parallel()
+
 	container := types.ContainerJSON{
 		ContainerJSONBase: &types.ContainerJSONBase{
 			ID:   cont1ID,
@@ -2664,6 +2696,8 @@ output:
 }
 
 func compareRules(t *testing.T, comparer func(r1, r2 *nftables.Rule) bool, chainName string, expectedRules, rules []*nftables.Rule) {
+	t.Helper()
+
 	if len(expectedRules) != len(rules) {
 		t.Errorf("chain %s different amount of rules: want %d got %d", chainName, len(expectedRules), len(rules))
 		return

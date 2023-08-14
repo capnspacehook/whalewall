@@ -7,10 +7,16 @@ linters:
   enable:
     - asasalint
     - bidichk
+    - bodyclose
     - durationcheck
     - errcheck
+    - errchkjson
     - errorlint
+    - execinquery
     - forcetypeassert
+    - gci
+    - gocheckcompilerdirectives
+    - goconst
     - gocritic
     - gofumpt
     - gosimple
@@ -18,12 +24,19 @@ linters:
     - ineffassign
     - loggercheck
     - misspell
+    - mirror
     - nilerr
     - nilnil
+    - noctx
+    - paralleltest
     - prealloc
     - predeclared
     - reassign
     - revive
+    - rowserrcheck
+    - sqlclosecheck
+    - tenv
+    - thelper
     - unconvert
     - unparam
     - unused
@@ -33,12 +46,16 @@ linters-settings:
   errcheck:
     exclude-functions:
       - (go.uber.org/zap/zapcore.ObjectEncoder).AddObject
+  gci:
+    sections:
+      - standard
+      - default
+      - prefix(github.com/capnspacehook/whalewall)
   misspell:
     locale: US
+  paralleltest:
+    ignore-missing: true
   revive:
     rules:
       - name: blank-imports
         disabled: true
-
-run:
-  timeout: 5m
