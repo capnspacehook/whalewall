@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/google/nftables"
@@ -15,10 +16,7 @@ import (
 
 const anonSetName = "__set%d"
 
-var (
-	globalFirewall *mockFirewall
-	setAllocNum    = 1
-)
+var setAllocNum = 1
 
 type firewallClient interface {
 	AddTable(t *nftables.Table) *nftables.Table
@@ -51,6 +49,8 @@ type mockFirewall struct {
 	unsetLookupExprs []*expr.Lookup
 
 	flushErr error
+
+	bf baseFirewallReaderWriter
 }
 
 type table struct {
@@ -59,29 +59,54 @@ type table struct {
 	newAnonSets map[string]bool
 }
 
+type setMap map[string][]nftables.SetElement
+
 type chain struct {
 	Chain *nftables.Chain
 	Rules []*nftables.Rule
 }
 
-type setMap map[string][]nftables.SetElement
+type baseFirewallReaderWriter interface {
+	readBaseFirewall(f func(base *mockFirewall))
+	writeBaseFirewall(f func(base *mockFirewall))
+}
 
-func newMockFirewall(logger *zap.Logger) *mockFirewall {
-	if globalFirewall == nil {
-		globalFirewall = &mockFirewall{
+type mockFirewallCreatorI interface {
+	newMockFirewall() *mockFirewall
+	baseFirewallReaderWriter
+}
+
+func newMockFirewallCreator(logger *zap.Logger) mockFirewallCreatorI {
+	m := &mockFirewallCreator{
+		baseFirewall: &mockFirewall{
 			tables: make(map[string]*table),
 			chains: make(map[string]chain),
-		}
+		},
+		logger: logger,
 	}
-
-	m := &mockFirewall{
-		logger: logger.Sugar(),
-		tables: clone(globalFirewall.tables),
-		chains: clone(globalFirewall.chains),
-	}
-	initTables(m)
 
 	return m
+}
+
+type mockFirewallCreator struct {
+	baseFirewall *mockFirewall
+	mtx          sync.RWMutex
+	logger       *zap.Logger
+}
+
+func (m *mockFirewallCreator) newMockFirewall() *mockFirewall {
+	m.mtx.RLock()
+	defer m.mtx.RUnlock()
+
+	newFirewall := &mockFirewall{
+		logger: m.logger.Sugar(),
+		tables: clone(m.baseFirewall.tables),
+		chains: clone(m.baseFirewall.chains),
+		bf:     m,
+	}
+	initTables(newFirewall)
+
+	return newFirewall
 }
 
 func initTables(m *mockFirewall) {
@@ -90,12 +115,16 @@ func initTables(m *mockFirewall) {
 	}
 }
 
-func (m *mockFirewall) clone() *mockFirewall {
-	return &mockFirewall{
-		logger: m.logger,
-		tables: clone(m.tables),
-		chains: clone(m.chains),
-	}
+func (m *mockFirewallCreator) readBaseFirewall(f func(base *mockFirewall)) {
+	m.mtx.RLock()
+	f(m.baseFirewall)
+	m.mtx.RUnlock()
+}
+
+func (m *mockFirewallCreator) writeBaseFirewall(f func(base *mockFirewall)) {
+	m.mtx.Lock()
+	f(m.baseFirewall)
+	m.mtx.Unlock()
 }
 
 func (m *mockFirewall) AddTable(t *nftables.Table) *nftables.Table {
@@ -143,11 +172,13 @@ func (m *mockFirewall) DelChain(c *nftables.Chain) {
 
 func (m *mockFirewall) ListChainsOfTableFamily(family nftables.TableFamily) ([]*nftables.Chain, error) {
 	var chains []*nftables.Chain
-	for _, c := range globalFirewall.chains {
-		if c.Chain.Table.Family == family {
-			chains = append(chains, c.Chain)
+	m.bf.readBaseFirewall(func(base *mockFirewall) {
+		for _, c := range base.chains {
+			if c.Chain.Table.Family == family {
+				chains = append(chains, c.Chain)
+			}
 		}
-	}
+	})
 
 	return chains, nil
 }
@@ -422,20 +453,28 @@ func (m *mockFirewall) checkRule(r *nftables.Rule, t *table) {
 }
 
 func (m *mockFirewall) GetRules(t *nftables.Table, c *nftables.Chain) ([]*nftables.Rule, error) {
-	ch, ok := globalFirewall.chains[c.Name]
-	if !ok {
-		return nil, syscall.ENOENT
-	}
+	var rules []*nftables.Rule
+	var err error
+	m.bf.readBaseFirewall(func(base *mockFirewall) {
+		ch, ok := base.chains[c.Name]
+		if !ok {
+			err = syscall.ENOENT
+			return
+		}
+		rules = clone(ch.Rules)
+	})
 
-	return clone(ch.Rules), nil
+	return rules, err
 }
 
 func (m *mockFirewall) Flush() error {
 	defer func() {
 		m.changed = false
-		m.tables = clone(globalFirewall.tables)
-		initTables(m)
-		m.chains = clone(globalFirewall.chains)
+		m.bf.readBaseFirewall(func(base *mockFirewall) {
+			m.tables = clone(base.tables)
+			initTables(m)
+			m.chains = clone(base.chains)
+		})
 		m.flushErr = nil
 	}()
 
@@ -461,8 +500,10 @@ func (m *mockFirewall) Flush() error {
 
 	// only propagate changes if there were changes made
 	if m.changed {
-		globalFirewall.tables = m.tables
-		globalFirewall.chains = m.chains
+		m.bf.writeBaseFirewall(func(base *mockFirewall) {
+			base.tables = m.tables
+			base.chains = m.chains
+		})
 	}
 
 	return nil
