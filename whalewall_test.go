@@ -2103,7 +2103,8 @@ mapped_ports:
 
 			// create mock nftables client and add required prerequisite
 			// DOCKER-USER chain
-			mfc := newMockFirewall(logger)
+			firewallCreator := newMockFirewallCreator(logger)
+			mfc := firewallCreator.newMockFirewall()
 			mfc.AddTable(filterTable)
 			mfc.AddChain(&nftables.Chain{
 				Name:  dockerChainName,
@@ -2112,7 +2113,7 @@ mapped_ports:
 			})
 			is.NoErr(mfc.Flush())
 			r.newFirewallClient = func() (firewallClient, error) {
-				return newMockFirewall(logger), nil
+				return firewallCreator.newMockFirewall(), nil
 			}
 
 			// create new database and base rules
@@ -2187,12 +2188,11 @@ mapped_ports:
 					err := r.deleteContainerRules(context.Background(), c.ID, contName)
 					is.NoErr(err)
 
-					checkMfc := mfc.clone()
 					chain := &nftables.Chain{
 						Name:  buildChainName(contName, c.ID),
 						Table: filterTable,
 					}
-					_, err = checkMfc.GetRules(filterTable, chain)
+					_, err = mfc.GetRules(filterTable, chain)
 					is.True(errors.Is(err, syscall.ENOENT))
 				}
 				is.NoErr(mfc.Flush())
@@ -2310,7 +2310,8 @@ output:
 
 	// create mock nftables client and add required prerequisite
 	// DOCKER-USER chain
-	mfc := newMockFirewall(logger)
+	firewallCreator := newMockFirewallCreator(logger)
+	mfc := firewallCreator.newMockFirewall()
 	mfc.AddTable(filterTable)
 	mfc.AddChain(&nftables.Chain{
 		Name:  dockerChainName,
@@ -2319,7 +2320,7 @@ output:
 	})
 	is.NoErr(mfc.Flush())
 	r.newFirewallClient = func() (firewallClient, error) {
-		return newMockFirewall(logger), nil
+		return firewallCreator.newMockFirewall(), nil
 	}
 
 	// create new database and base rules
@@ -2451,7 +2452,8 @@ output:
 
 	// create mock nftables client and add required prerequisite
 	// DOCKER-USER chain
-	mfc := newMockFirewall(logger)
+	firewallCreator := newMockFirewallCreator(logger)
+	mfc := firewallCreator.newMockFirewall()
 	mfc.AddTable(filterTable)
 	mfc.AddChain(&nftables.Chain{
 		Name:  dockerChainName,
@@ -2460,7 +2462,7 @@ output:
 	})
 	is.NoErr(mfc.Flush())
 	r.newFirewallClient = func() (firewallClient, error) {
-		return newMockFirewall(logger), nil
+		return firewallCreator.newMockFirewall(), nil
 	}
 
 	// create new database and base rules
@@ -2601,7 +2603,8 @@ output:
 
 	// create mock nftables client and add required prerequisite
 	// DOCKER-USER chain
-	mfc := newMockFirewall(logger)
+	firewallCreator := newMockFirewallCreator(logger)
+	mfc := firewallCreator.newMockFirewall()
 	mfc.AddTable(filterTable)
 	mfc.AddChain(&nftables.Chain{
 		Name:  dockerChainName,
@@ -2610,7 +2613,7 @@ output:
 	})
 	is.NoErr(mfc.Flush())
 	r.newFirewallClient = func() (firewallClient, error) {
-		return newMockFirewall(logger), nil
+		return firewallCreator.newMockFirewall(), nil
 	}
 
 	// create new database and base rules
