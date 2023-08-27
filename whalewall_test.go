@@ -655,7 +655,8 @@ output:
 							enabledLabel: "true",
 							rulesLabel: `
 output:
-  - ip: 1.1.1.1
+  - ips:
+      - 1.1.1.1
     proto: tcp
     dst_ports:
       - 443`,
@@ -727,7 +728,8 @@ output:
 							enabledLabel: "true",
 							rulesLabel: `
 output:
-  - ip: 192.168.1.0/24
+  - ips:
+      - 192.168.1.0/24
     proto: udp
     dst_ports:
       - 53`,
@@ -1747,7 +1749,8 @@ mapped_ports:
 mapped_ports:
   external:
     allow: true
-    ip: 192.168.1.0/24`,
+    ips:
+      - 192.168.1.0/24`,
 						},
 					},
 					NetworkSettings: &types.NetworkSettings{

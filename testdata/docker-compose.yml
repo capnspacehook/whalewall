@@ -14,7 +14,8 @@ services:
           - proto: udp
             dst_ports:
               - 53
-          - ip: 1.1.1.1
+          - ips:
+              - 1.1.1.1
             proto: tcp
             dst_ports:
               - 80

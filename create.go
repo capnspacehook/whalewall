@@ -431,8 +431,8 @@ func (r *RuleManager) populateOutputRules(ctx context.Context, tx database.TX, c
 				if err != nil {
 					return fmt.Errorf("error parsing IP of container %q from network %q: %w", ruleCfg.Container, dstNetName, err)
 				}
-				cfg.Output[i].IP = addrOrRange{
-					addr: addr,
+				cfg.Output[i].IPs = []addrOrRange{
+					{addr: addr},
 				}
 				break
 			}
@@ -596,7 +596,7 @@ func (r *RuleManager) createPortMappingRules(nfc firewallClient, logger *zap.Log
 					continue
 				}
 
-				if !localAllowed || (localAllowed && (!mappedPortsCfg.External.Allow || mappedPortsCfg.External.IP.IsValid())) {
+				if !localAllowed || (localAllowed && (!mappedPortsCfg.External.Allow || len(mappedPortsCfg.External.IPs) != 0)) {
 					// Create rules to allow/drop traffic from container
 					// network gateway to container; this will only be hit
 					// for traffic originating from localhost after being
@@ -609,8 +609,8 @@ func (r *RuleManager) createPortMappingRules(nfc firewallClient, logger *zap.Log
 						addr:    addrs[netName],
 						cfg: ruleConfig{
 							LogPrefix: mappedPortsCfg.Localhost.LogPrefix,
-							IP: addrOrRange{
-								addr: gateway,
+							IPs: []addrOrRange{
+								{addr: gateway},
 							},
 							Proto: proto,
 							DstPorts: []rulePorts{
@@ -644,8 +644,8 @@ func (r *RuleManager) createPortMappingRules(nfc firewallClient, logger *zap.Log
 					localhostDropRule := ruleDetails{
 						inbound: true,
 						cfg: ruleConfig{
-							IP: addrOrRange{
-								addr: localAddr,
+							IPs: []addrOrRange{
+								{addr: localAddr},
 							},
 							Proto: proto,
 							DstPorts: []rulePorts{
@@ -680,7 +680,7 @@ func (r *RuleManager) createPortMappingRules(nfc firewallClient, logger *zap.Log
 					addr:    addrs[netName],
 					cfg: ruleConfig{
 						LogPrefix: mappedPortsCfg.External.LogPrefix,
-						IP:        mappedPortsCfg.External.IP,
+						IPs:       mappedPortsCfg.External.IPs,
 						Proto:     proto,
 						DstPorts: []rulePorts{
 							{
@@ -853,7 +853,7 @@ func (r *RuleManager) createWaitingContainerRules(ctx context.Context, nfc firew
 		if !ok {
 			return nil, fmt.Errorf("error parsing IP of from network %q", dstNetName)
 		}
-		ruleCfg.IP.addr = dstAddr
+		ruleCfg.IPs = []addrOrRange{{addr: dstAddr}}
 
 		// create rules
 		rule := ruleDetails{
@@ -1055,8 +1055,10 @@ func createNFTRule(nfc firewallClient, inbound, inversePortOffsets bool, state u
 		proto = unix.IPPROTO_UDP
 	}
 	exprs := make([]expr.Any, 0, 15)
-	if cfg.IP.IsValid() {
-		if cfgAddr, ok := cfg.IP.Addr(); ok {
+	if len(cfg.IPs) != 0 {
+		// TODO: handle multiple IPs
+		ip := cfg.IPs[0]
+		if cfgAddr, ok := ip.Addr(); ok {
 			var addrExprs []expr.Any
 			if len(addr) != 0 {
 				addrExprs = matchIPExprs(addr, addrOffset)
@@ -1069,7 +1071,7 @@ func createNFTRule(nfc firewallClient, inbound, inversePortOffsets bool, state u
 				exprs = append(exprs, addrExprs...)
 				exprs = append(exprs, cfgAddrExprs...)
 			}
-		} else if lowAddr, highAddr, ok := cfg.IP.Range(); ok {
+		} else if lowAddr, highAddr, ok := ip.Range(); ok {
 			var addrExprs []expr.Any
 			if len(addr) != 0 {
 				addrExprs = matchIPExprs(addr, addrOffset)
