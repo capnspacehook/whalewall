@@ -248,14 +248,14 @@ func (p *rulePorts) UnmarshalText(text []byte) error {
 	validChars := []byte{'1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-'}
 	for i, char := range text {
 		if !slices.Contains(validChars, char) {
-			return fmt.Errorf(`invalid character %q in "dst_ports"`, char)
+			return fmt.Errorf("invalid character %q in port", char)
 		}
 		if char == '-' {
 			if intervalIdx != 0 {
-				return errors.New(`"dst_ports" can only have one '-' if specifying an interval`)
+				return errors.New("there can only be one '-' if specifying a port interval")
 			}
 			if i == len(text)-1 {
-				return errors.New(`"dst_ports" interval can't end with a '-'`)
+				return errors.New("port interval can't end with a '-'")
 			}
 			intervalIdx = i
 		}
@@ -265,11 +265,11 @@ func (p *rulePorts) UnmarshalText(text []byte) error {
 	if intervalIdx != 0 {
 		min, err := strconv.ParseUint(string(text[:intervalIdx]), 10, 16)
 		if err != nil {
-			return fmt.Errorf(`error parsing start of "dst_ports" interval: %w`, err)
+			return fmt.Errorf("error parsing start of port interval: %w", err)
 		}
 		max, err := strconv.ParseUint(string(text[intervalIdx+1:]), 10, 16)
 		if err != nil {
-			return fmt.Errorf(`error parsing end of "dst_ports" interval: %w`, err)
+			return fmt.Errorf("error parsing end of port interval: %w", err)
 		}
 		parsedPorts.interval = portInterval{
 			min: uint16(min),
@@ -278,7 +278,7 @@ func (p *rulePorts) UnmarshalText(text []byte) error {
 	} else {
 		port, err := strconv.ParseUint(string(text), 10, 16)
 		if err != nil {
-			return fmt.Errorf(`error parsing "dst_ports": %w`, err)
+			return fmt.Errorf("error parsing port: %w", err)
 		}
 		parsedPorts.single = uint16(port)
 	}
