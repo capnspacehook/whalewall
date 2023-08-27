@@ -35,10 +35,10 @@ const (
 
 	chainPrefix = "whalewall-"
 
-	srcAddrOffset = 12
-	dstAddrOffset = 16
-	srcPortOffset = 0
-	dstPortOffset = 2
+	srcAddrOffset = uint32(12)
+	dstAddrOffset = uint32(16)
+	srcPortOffset = uint32(0)
+	dstPortOffset = uint32(2)
 
 	stateNew    = expr.CtStateBitNEW
 	stateEst    = expr.CtStateBitESTABLISHED | expr.CtStateBitRELATED
@@ -431,8 +431,8 @@ func (r *RuleManager) populateOutputRules(ctx context.Context, tx database.TX, c
 				if err != nil {
 					return fmt.Errorf("error parsing IP of container %q from network %q: %w", ruleCfg.Container, dstNetName, err)
 				}
-				cfg.Output[i].IP = addrOrRange{
-					addr: addr,
+				cfg.Output[i].IPs = []addrOrRange{
+					{addr: addr},
 				}
 				break
 			}
@@ -596,7 +596,7 @@ func (r *RuleManager) createPortMappingRules(nfc firewallClient, logger *zap.Log
 					continue
 				}
 
-				if !localAllowed || (localAllowed && (!mappedPortsCfg.External.Allow || mappedPortsCfg.External.IP.IsValid())) {
+				if !localAllowed || (localAllowed && (!mappedPortsCfg.External.Allow || len(mappedPortsCfg.External.IPs) != 0)) {
 					// Create rules to allow/drop traffic from container
 					// network gateway to container; this will only be hit
 					// for traffic originating from localhost after being
@@ -609,8 +609,8 @@ func (r *RuleManager) createPortMappingRules(nfc firewallClient, logger *zap.Log
 						addr:    addrs[netName],
 						cfg: ruleConfig{
 							LogPrefix: mappedPortsCfg.Localhost.LogPrefix,
-							IP: addrOrRange{
-								addr: gateway,
+							IPs: []addrOrRange{
+								{addr: gateway},
 							},
 							Proto: proto,
 							DstPorts: []rulePorts{
@@ -644,8 +644,8 @@ func (r *RuleManager) createPortMappingRules(nfc firewallClient, logger *zap.Log
 					localhostDropRule := ruleDetails{
 						inbound: true,
 						cfg: ruleConfig{
-							IP: addrOrRange{
-								addr: localAddr,
+							IPs: []addrOrRange{
+								{addr: localAddr},
 							},
 							Proto: proto,
 							DstPorts: []rulePorts{
@@ -680,7 +680,7 @@ func (r *RuleManager) createPortMappingRules(nfc firewallClient, logger *zap.Log
 					addr:    addrs[netName],
 					cfg: ruleConfig{
 						LogPrefix: mappedPortsCfg.External.LogPrefix,
-						IP:        mappedPortsCfg.External.IP,
+						IPs:       mappedPortsCfg.External.IPs,
 						Proto:     proto,
 						DstPorts: []rulePorts{
 							{
@@ -853,7 +853,7 @@ func (r *RuleManager) createWaitingContainerRules(ctx context.Context, nfc firew
 		if !ok {
 			return nil, fmt.Errorf("error parsing IP of from network %q", dstNetName)
 		}
-		ruleCfg.IP.addr = dstAddr
+		ruleCfg.IPs = []addrOrRange{{addr: dstAddr}}
 
 		// create rules
 		rule := ruleDetails{
@@ -1055,39 +1055,24 @@ func createNFTRule(nfc firewallClient, inbound, inversePortOffsets bool, state u
 		proto = unix.IPPROTO_UDP
 	}
 	exprs := make([]expr.Any, 0, 15)
-	if cfg.IP.IsValid() {
-		if cfgAddr, ok := cfg.IP.Addr(); ok {
-			var addrExprs []expr.Any
-			if len(addr) != 0 {
-				addrExprs = matchIPExprs(addr, addrOffset)
-			}
-			cfgAddrExprs := matchIPExprs(ref(cfgAddr.As4())[:], cfgAddrOffset)
-			if inbound {
-				exprs = append(exprs, cfgAddrExprs...)
-				exprs = append(exprs, addrExprs...)
-			} else {
-				exprs = append(exprs, addrExprs...)
-				exprs = append(exprs, cfgAddrExprs...)
-			}
-		} else if lowAddr, highAddr, ok := cfg.IP.Range(); ok {
-			var addrExprs []expr.Any
-			if len(addr) != 0 {
-				addrExprs = matchIPExprs(addr, addrOffset)
-			}
-			rangeExprs := matchIPRangeExprs(lowAddr, highAddr, cfgAddrOffset)
-			if inbound {
-				exprs = append(exprs, rangeExprs...)
-				exprs = append(exprs, addrExprs...)
-			} else {
-				exprs = append(exprs, addrExprs...)
-				exprs = append(exprs, rangeExprs...)
-			}
+	if len(cfg.IPs) != 0 {
+		var addrExprs []expr.Any
+		if len(addr) != 0 {
+			addrExprs = matchAddrExprs(addr, addrOffset)
+		}
+		cfgAddrExprs, err := createIPExprs(nfc, cfg.IPs, cfgAddrOffset, chain)
+		if err != nil {
+			return nil, err
+		}
+		if inbound {
+			exprs = append(exprs, cfgAddrExprs...)
+			exprs = append(exprs, addrExprs...)
 		} else {
-			// should never happen if cfg.IP.IsValid is true
-			return nil, errors.New("invalid IP address")
+			exprs = append(exprs, addrExprs...)
+			exprs = append(exprs, cfgAddrExprs...)
 		}
 	} else if len(addr) != 0 {
-		exprs = append(exprs, matchIPExprs(addr, addrOffset)...)
+		exprs = append(exprs, matchAddrExprs(addr, addrOffset)...)
 	}
 
 	if cfg.Proto != invalidProto {
@@ -1097,9 +1082,9 @@ func createNFTRule(nfc firewallClient, inbound, inversePortOffsets bool, state u
 	var srcPortExprs []expr.Any
 	var dstPortExprs []expr.Any
 	if len(cfg.SrcPorts) != 0 {
-		portOffset := uint32(srcPortOffset)
+		portOffset := srcPortOffset
 		if inversePortOffsets {
-			portOffset = uint32(dstPortOffset)
+			portOffset = dstPortOffset
 		}
 		portExprs, err := createPortExprs(nfc, cfg.SrcPorts, portOffset, chain)
 		if err != nil {
@@ -1108,9 +1093,9 @@ func createNFTRule(nfc firewallClient, inbound, inversePortOffsets bool, state u
 		srcPortExprs = portExprs
 	}
 	if len(cfg.DstPorts) != 0 {
-		portOffset := uint32(dstPortOffset)
+		portOffset := dstPortOffset
 		if inversePortOffsets {
-			portOffset = uint32(srcPortOffset)
+			portOffset = srcPortOffset
 		}
 		portExprs, err := createPortExprs(nfc, cfg.DstPorts, portOffset, chain)
 		if err != nil {
@@ -1160,6 +1145,93 @@ func createNFTRule(nfc firewallClient, inbound, inversePortOffsets bool, state u
 	}, nil
 }
 
+func createIPExprs(nfc firewallClient, addrs []addrOrRange, addrOffset uint32, chain *nftables.Chain) ([]expr.Any, error) {
+	var exprs []expr.Any
+
+	if len(addrs) == 1 {
+		if addr, ok := addrs[0].Addr(); ok {
+			exprs = matchAddrExprs(ref(addr.As4())[:], addrOffset)
+		} else if lowAddr, highAddr, ok := addrs[0].Range(); ok {
+			exprs = matchAddrRangeExprs(lowAddr, highAddr, addrOffset)
+		} else {
+			// should never happen if cfg.IP.IsValid is true
+			return nil, errors.New("whalewall bug: invalid IP address")
+		}
+		return exprs, nil
+	}
+
+	exprs = append(exprs, getAddrExpr(addrOffset))
+
+	var singleAddr []byte
+	var singleAddrElems []nftables.SetElement
+	for _, addr := range addrs {
+		if addr, ok := addr.Addr(); ok {
+			singleAddr = ref(addr.As4())[:]
+			singleAddrElems = append(singleAddrElems, nftables.SetElement{
+				Key: singleAddr,
+			})
+		}
+	}
+	if len(singleAddrElems) != 0 {
+		if len(singleAddrElems) == 1 {
+			// there is only one single addr, no need to create a set
+			exprs = append(exprs, compareAddrExpr(singleAddr))
+		} else {
+			set := &nftables.Set{
+				Table:     chain.Table,
+				Anonymous: true,
+				Constant:  true,
+				KeyType:   nftables.TypeInetService,
+			}
+			if err := nfc.AddSet(set, singleAddrElems); err != nil {
+				return nil, fmt.Errorf("error creating set: %w", err)
+			}
+			exprs = append(exprs, matchFromSetExpr(set))
+		}
+	}
+
+	var addrRangeLow []byte
+	var addrRangeHigh []byte
+	var addrRangeElems []nftables.SetElement
+	for _, addr := range addrs {
+		if lowAddr, highAddr, ok := addr.Range(); ok {
+			addrRangeLow = ref(lowAddr.As4())[:]
+			addrRangeHigh = ref(highAddr.As4())[:]
+			addrRangeElems = append(addrRangeElems, nftables.SetElement{
+				Key: addrRangeLow,
+			})
+			addrRangeElems = append(addrRangeElems, nftables.SetElement{
+				Key:         addrRangeHigh,
+				IntervalEnd: true,
+			})
+		}
+	}
+	if len(addrRangeElems) != 0 {
+		if len(addrRangeElems) == 2 {
+			// there is only one single port range, no need to create a set
+			exprs = append(exprs, compareAddrRangeExprs(addrRangeLow, addrRangeHigh)...)
+		} else {
+			set := &nftables.Set{
+				Table:     chain.Table,
+				Anonymous: true,
+				Constant:  true,
+				Interval:  true,
+				KeyType:   nftables.TypeIPAddr,
+			}
+			if err := nfc.AddSet(set, addrRangeElems); err != nil {
+				return nil, fmt.Errorf("error creating set: %w", err)
+			}
+			exprs = append(exprs, matchFromSetExpr(set))
+		}
+	}
+
+	if len(exprs) == 1 {
+		return nil, errors.New("whalewall bug: only one addr expr created")
+	}
+
+	return exprs, nil
+}
+
 func createPortExprs(nfc firewallClient, ports []rulePorts, portOffset uint32, chain *nftables.Chain) ([]expr.Any, error) {
 	var exprs []expr.Any
 
@@ -1176,11 +1248,11 @@ func createPortExprs(nfc firewallClient, ports []rulePorts, portOffset uint32, c
 
 	var singlePort uint16
 	var singlePortElems []nftables.SetElement
-	for _, ports := range ports {
-		if ports.single != 0 {
-			singlePort = ports.single
+	for _, port := range ports {
+		if port.single != 0 {
+			singlePort = port.single
 			singlePortElems = append(singlePortElems, nftables.SetElement{
-				Key: binary.BigEndian.AppendUint16(nil, ports.single),
+				Key: binary.BigEndian.AppendUint16(nil, port.single),
 			})
 		}
 	}
@@ -1204,14 +1276,14 @@ func createPortExprs(nfc firewallClient, ports []rulePorts, portOffset uint32, c
 
 	var portRange portInterval
 	var portIntervalElems []nftables.SetElement
-	for _, ports := range ports {
-		if ports.single == 0 {
-			portRange = ports.interval
+	for _, port := range ports {
+		if port.single == 0 {
+			portRange = port.interval
 			portIntervalElems = append(portIntervalElems, nftables.SetElement{
-				Key: binary.BigEndian.AppendUint16(nil, ports.interval.min),
+				Key: binary.BigEndian.AppendUint16(nil, port.interval.min),
 			})
 			portIntervalElems = append(portIntervalElems, nftables.SetElement{
-				Key:         binary.BigEndian.AppendUint16(nil, ports.interval.max),
+				Key:         binary.BigEndian.AppendUint16(nil, port.interval.max),
 				IntervalEnd: true,
 			})
 		}
@@ -1242,46 +1314,51 @@ func createPortExprs(nfc firewallClient, ports []rulePorts, portOffset uint32, c
 	return exprs, nil
 }
 
-func matchIPExprs(addr []byte, offset int) []expr.Any {
+func matchAddrExprs(addr []byte, offset uint32) []expr.Any {
 	return []expr.Any{
-		// [ payload load 4b @ network header + ... => reg 1 ]
-		&expr.Payload{
-			OperationType: expr.PayloadLoad,
-			Len:           4,
-			Base:          expr.PayloadBaseNetworkHeader,
-			Offset:        uint32(offset),
-			DestRegister:  1,
-		},
-		// [ cmp eq reg 1 ... ]
-		&expr.Cmp{
-			Op:       expr.CmpOpEq,
-			Register: 1,
-			Data:     addr,
-		},
+		getAddrExpr(offset),
+		compareAddrExpr(addr),
 	}
 }
 
-func matchIPRangeExprs(lowAddr, highAddr netip.Addr, offset int) []expr.Any {
+func getAddrExpr(offset uint32) expr.Any {
+	// [ payload load 4b @ network header + ... => reg 1 ]
+	return &expr.Payload{
+		OperationType: expr.PayloadLoad,
+		Len:           4,
+		Base:          expr.PayloadBaseNetworkHeader,
+		Offset:        offset,
+		DestRegister:  1,
+	}
+}
+
+func compareAddrExpr(addr []byte) expr.Any {
+	// [ cmp eq reg 1 ... ]
+	return &expr.Cmp{
+		Op:       expr.CmpOpEq,
+		Register: 1,
+		Data:     addr,
+	}
+}
+
+func matchAddrRangeExprs(lowAddr, highAddr netip.Addr, offset uint32) []expr.Any {
+	exprs := []expr.Any{getAddrExpr(offset)}
+	return append(exprs, compareAddrRangeExprs(ref(lowAddr.As4())[:], ref(highAddr.As4())[:])...)
+}
+
+func compareAddrRangeExprs(lowAddr, highAddr []byte) []expr.Any {
 	return []expr.Any{
-		// [ payload load 4b @ network header + ... => reg 1 ]
-		&expr.Payload{
-			OperationType: expr.PayloadLoad,
-			Len:           4,
-			Base:          expr.PayloadBaseNetworkHeader,
-			Offset:        uint32(offset),
-			DestRegister:  1,
-		},
 		// [ cmp gte reg 1 ... ]
 		&expr.Cmp{
 			Op:       expr.CmpOpGte,
 			Register: 1,
-			Data:     ref(lowAddr.As4())[:],
+			Data:     lowAddr,
 		},
 		// [ cmp lte reg 1 ... ]
 		&expr.Cmp{
 			Op:       expr.CmpOpLte,
 			Register: 1,
-			Data:     ref(highAddr.As4())[:],
+			Data:     highAddr,
 		},
 	}
 }
@@ -1306,6 +1383,17 @@ func matchPortExprs(port uint16, offset uint32) []expr.Any {
 	return []expr.Any{
 		getPortExpr(offset),
 		comparePortExpr(port),
+	}
+}
+
+func getPortExpr(offset uint32) expr.Any {
+	// [ payload load 2b @ transport header + ... => reg 1 ]
+	return &expr.Payload{
+		OperationType: expr.PayloadLoad,
+		Len:           2,
+		Base:          expr.PayloadBaseTransportHeader,
+		Offset:        offset,
+		DestRegister:  1,
 	}
 }
 
@@ -1338,17 +1426,6 @@ func comparePortsExprs(ports portInterval) []expr.Any {
 			Register: 1,
 			Data:     binary.BigEndian.AppendUint16(nil, ports.max),
 		},
-	}
-}
-
-func getPortExpr(offset uint32) expr.Any {
-	// [ payload load 2b @ transport header + ... => reg 1 ]
-	return &expr.Payload{
-		OperationType: expr.PayloadLoad,
-		Len:           2,
-		Base:          expr.PayloadBaseTransportHeader,
-		Offset:        offset,
-		DestRegister:  1,
 	}
 }
 

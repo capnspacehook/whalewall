@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strconv"
 
-	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go4.org/netipx"
 )
@@ -33,14 +32,14 @@ type localRules struct {
 type externalRules struct {
 	Allow     bool
 	LogPrefix string `yaml:"log_prefix"`
-	IP        addrOrRange
+	IPs       []addrOrRange
 	Verdict   verdict
 }
 
 type ruleConfig struct {
 	LogPrefix string `yaml:"log_prefix"`
 	Network   string
-	IP        addrOrRange
+	IPs       []addrOrRange
 	Container string
 	Proto     protocol
 	SrcPorts  []rulePorts `yaml:"src_ports"`
@@ -57,8 +56,10 @@ func (r ruleConfig) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 	if r.Network != "" {
 		enc.AddString("network", r.Network)
 	}
-	if r.IP.IsValid() {
-		zap.Inline(r.IP).AddTo(enc)
+	if len(r.IPs) != 0 {
+		if err := enc.AddArray("ips", addrsList(r.IPs)); err != nil {
+			return err
+		}
 	}
 	if r.Container != "" {
 		enc.AddString("container", r.Container)
@@ -104,6 +105,18 @@ func (v verdict) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 		enc.AddUint16("output_est_queue", v.OutputEstQueue)
 	}
 	enc.AddBool("drop", v.drop)
+
+	return nil
+}
+
+type addrsList []addrOrRange
+
+func (a addrsList) MarshalLogArray(enc zapcore.ArrayEncoder) error {
+	for _, addr := range a {
+		if err := enc.AppendObject(addr); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
@@ -310,10 +323,10 @@ func validateConfig(c config) error {
 }
 
 func validateRule(r ruleConfig) error {
-	if !r.IP.IsValid() && r.Container == "" && r.Proto == invalidProto && len(r.SrcPorts) == 0 && len(r.DstPorts) == 0 {
+	if len(r.IPs) == 0 && r.Container == "" && r.Proto == invalidProto && len(r.SrcPorts) == 0 && len(r.DstPorts) == 0 {
 		return errors.New("rule is empty")
 	}
-	if r.IP.IsValid() && r.Container != "" {
+	if len(r.IPs) != 0 && r.Container != "" {
 		return errors.New(`"ip" and "container" are mutually exclusive`)
 	}
 

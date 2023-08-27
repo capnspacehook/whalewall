@@ -450,7 +450,7 @@ output:
 				}: {
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(443, dstPortOffset),
 							matchConnStateExprs(stateNewEst),
@@ -463,7 +463,7 @@ output:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(443, srcPortOffset),
 							matchConnStateExprs(stateEst),
@@ -520,7 +520,7 @@ output:
 				}: {
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							[]expr.Any{
 								getPortExpr(dstPortOffset),
@@ -538,7 +538,7 @@ output:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							[]expr.Any{
 								getPortExpr(srcPortOffset),
@@ -600,7 +600,7 @@ output:
 				}: {
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							[]expr.Any{
 								getPortExpr(dstPortOffset),
@@ -617,7 +617,7 @@ output:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							[]expr.Any{
 								getPortExpr(srcPortOffset),
@@ -655,7 +655,8 @@ output:
 							enabledLabel: "true",
 							rulesLabel: `
 output:
-  - ip: 1.1.1.1
+  - ips:
+      - 1.1.1.1
     proto: tcp
     dst_ports:
       - 443`,
@@ -678,8 +679,8 @@ output:
 				}: {
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
-							matchIPExprs(ref(dstAddr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(dstAddr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(443, dstPortOffset),
 							matchConnStateExprs(stateNewEst),
@@ -692,8 +693,8 @@ output:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(dstAddr.As4())[:], srcAddrOffset),
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(dstAddr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(443, srcPortOffset),
 							matchConnStateExprs(stateEst),
@@ -727,7 +728,8 @@ output:
 							enabledLabel: "true",
 							rulesLabel: `
 output:
-  - ip: 192.168.1.0/24
+  - ips:
+      - 192.168.1.0/24
     proto: udp
     dst_ports:
       - 53`,
@@ -750,8 +752,8 @@ output:
 				}: {
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
-							matchIPRangeExprs(lowDstAddr, highDstAddr, dstAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchAddrRangeExprs(lowDstAddr, highDstAddr, dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_UDP),
 							matchPortExprs(53, dstPortOffset),
 							matchConnStateExprs(stateNewEst),
@@ -764,8 +766,174 @@ output:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPRangeExprs(lowDstAddr, highDstAddr, srcAddrOffset),
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrRangeExprs(lowDstAddr, highDstAddr, srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchProtoExprs(unix.IPPROTO_UDP),
+							matchPortExprs(53, srcPortOffset),
+							matchConnStateExprs(stateEst),
+							[]expr.Any{
+								&expr.Counter{},
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					createDropRule(
+						&nftables.Chain{
+							Name:  buildChainName(cont1Name, cont1ID),
+							Table: filterTable,
+						},
+						cont1ID,
+					),
+				},
+			},
+		},
+		{
+			name: "allow DNS outbound to 2 IPs",
+			containers: []types.ContainerJSON{
+				{
+					ContainerJSONBase: &types.ContainerJSONBase{
+						ID:   cont1ID,
+						Name: "/" + cont1Name,
+					},
+					Config: &container.Config{
+						Labels: map[string]string{
+							enabledLabel: "true",
+							rulesLabel: `
+output:
+  - ips:
+      - 1.1.1.1
+      - 2.2.2.2
+    proto: udp
+    dst_ports:
+      - 53`,
+						},
+					},
+					NetworkSettings: &types.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"default": {
+								Gateway:   gatewayAddr.String(),
+								IPAddress: cont1Addr.String(),
+							},
+						},
+					},
+				},
+			},
+			expectedRules: map[*nftables.Chain][]*nftables.Rule{
+				{
+					Name:  buildChainName(cont1Name, cont1ID),
+					Table: filterTable,
+				}: {
+					{
+						Exprs: slicesJoin(
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							[]expr.Any{
+								getAddrExpr(dstAddrOffset),
+								matchFromSetExpr(&nftables.Set{
+									Name: anonSetName,
+								}),
+							},
+							matchProtoExprs(unix.IPPROTO_UDP),
+							matchPortExprs(53, dstPortOffset),
+							matchConnStateExprs(stateNewEst),
+							[]expr.Any{
+								&expr.Counter{},
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					{
+						Exprs: slicesJoin(
+							[]expr.Any{
+								getAddrExpr(srcAddrOffset),
+								matchFromSetExpr(&nftables.Set{
+									Name: anonSetName,
+								}),
+							},
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchProtoExprs(unix.IPPROTO_UDP),
+							matchPortExprs(53, srcPortOffset),
+							matchConnStateExprs(stateEst),
+							[]expr.Any{
+								&expr.Counter{},
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					createDropRule(
+						&nftables.Chain{
+							Name:  buildChainName(cont1Name, cont1ID),
+							Table: filterTable,
+						},
+						cont1ID,
+					),
+				},
+			},
+		},
+		{
+			name: "allow DNS outbound to mixed IPs",
+			containers: []types.ContainerJSON{
+				{
+					ContainerJSONBase: &types.ContainerJSONBase{
+						ID:   cont1ID,
+						Name: "/" + cont1Name,
+					},
+					Config: &container.Config{
+						Labels: map[string]string{
+							enabledLabel: "true",
+							rulesLabel: `
+output:
+  - ips:
+      - 1.1.1.1
+      - 192.168.1.0-192.168.1.255
+    proto: udp
+    dst_ports:
+      - 53`,
+						},
+					},
+					NetworkSettings: &types.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"default": {
+								Gateway:   gatewayAddr.String(),
+								IPAddress: cont1Addr.String(),
+							},
+						},
+					},
+				},
+			},
+			expectedRules: map[*nftables.Chain][]*nftables.Rule{
+				{
+					Name:  buildChainName(cont1Name, cont1ID),
+					Table: filterTable,
+				}: {
+					{
+						Exprs: slicesJoin(
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							[]expr.Any{
+								getAddrExpr(dstAddrOffset),
+								compareAddrExpr(ref(dstAddr.As4())[:]),
+							},
+							compareAddrRangeExprs(ref(lowDstAddr.As4())[:], ref(highDstAddr.As4())[:]),
+							matchProtoExprs(unix.IPPROTO_UDP),
+							matchPortExprs(53, dstPortOffset),
+							matchConnStateExprs(stateNewEst),
+							[]expr.Any{
+								&expr.Counter{},
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					{
+						Exprs: slicesJoin(
+							[]expr.Any{
+								getAddrExpr(srcAddrOffset),
+								compareAddrExpr(ref(dstAddr.As4())[:]),
+							},
+							compareAddrRangeExprs(ref(lowDstAddr.As4())[:], ref(highDstAddr.As4())[:]),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_UDP),
 							matchPortExprs(53, srcPortOffset),
 							matchConnStateExprs(stateEst),
@@ -823,7 +991,7 @@ output:
 				}: {
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
 							matchProtoExprs(unix.IPPROTO_UDP),
 							matchPortExprs(500, srcPortOffset),
 							matchPortsExprs(portInterval{
@@ -840,7 +1008,7 @@ output:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_UDP),
 							matchPortsExprs(portInterval{
 								min: 100,
@@ -901,7 +1069,7 @@ output:
 				}: {
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(443, dstPortOffset),
 							matchConnStateExprs(stateNew),
@@ -915,7 +1083,7 @@ output:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(443, dstPortOffset),
 							matchConnStateExprs(stateEst),
@@ -928,7 +1096,7 @@ output:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(443, srcPortOffset),
 							matchConnStateExprs(stateEst),
@@ -986,7 +1154,7 @@ output:
 				}: {
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(443, dstPortOffset),
 							matchConnStateExprs(stateNew),
@@ -1001,7 +1169,7 @@ output:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(443, dstPortOffset),
 							matchConnStateExprs(stateEst),
@@ -1014,7 +1182,7 @@ output:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(443, srcPortOffset),
 							matchConnStateExprs(stateEst),
@@ -1074,7 +1242,7 @@ output:
 				}: {
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(443, dstPortOffset),
 							matchConnStateExprs(stateNew),
@@ -1089,7 +1257,7 @@ output:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(443, dstPortOffset),
 							matchConnStateExprs(stateEst),
@@ -1104,7 +1272,7 @@ output:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(443, srcPortOffset),
 							matchConnStateExprs(stateEst),
@@ -1166,7 +1334,7 @@ output:
 				}: {
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(443, dstPortOffset),
 							matchConnStateExprs(stateNewEst),
@@ -1181,7 +1349,7 @@ output:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(443, srcPortOffset),
 							matchConnStateExprs(stateEst),
@@ -1260,8 +1428,8 @@ output:
 				}: {
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
-							matchIPExprs(ref(cont2Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont2Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_UDP),
 							matchPortExprs(9001, dstPortOffset),
 							matchConnStateExprs(stateNewEst),
@@ -1286,8 +1454,8 @@ output:
 				}: {
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont2Addr.As4())[:], srcAddrOffset),
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(cont2Addr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_UDP),
 							matchPortExprs(9001, srcPortOffset),
 							matchConnStateExprs(stateEst),
@@ -1366,8 +1534,8 @@ output:
 				}: {
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
-							matchIPExprs(ref(cont2Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont2Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_UDP),
 							matchPortExprs(42, srcPortOffset),
 							matchPortExprs(9001, dstPortOffset),
@@ -1393,8 +1561,8 @@ output:
 				}: {
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont2Addr.As4())[:], srcAddrOffset),
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(cont2Addr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_UDP),
 							matchPortExprs(9001, srcPortOffset),
 							matchPortExprs(42, dstPortOffset),
@@ -1479,8 +1647,8 @@ output:
 				}: {
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
-							matchIPExprs(ref(cont2Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont2Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(101, srcPortOffset),
 							matchConnStateExprs(stateEst),
@@ -1493,8 +1661,8 @@ output:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
-							matchIPExprs(ref(cont2Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont2Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(202, dstPortOffset),
 							matchConnStateExprs(stateNewEst),
@@ -1519,8 +1687,8 @@ output:
 				}: {
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont2Addr.As4())[:], srcAddrOffset),
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(cont2Addr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(101, dstPortOffset),
 							matchConnStateExprs(stateNewEst),
@@ -1533,8 +1701,8 @@ output:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont2Addr.As4())[:], srcAddrOffset),
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(cont2Addr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(202, srcPortOffset),
 							matchConnStateExprs(stateEst),
@@ -1610,7 +1778,7 @@ mapped_ports:
 				whalewallChain: {
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(localAddr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(localAddr.As4())[:], srcAddrOffset),
 							matchProtoExprs(unix.IPPROTO_UDP),
 							matchPortExprs(5533, dstPortOffset),
 							matchConnStateExprs(stateNew),
@@ -1623,7 +1791,7 @@ mapped_ports:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(localAddr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(localAddr.As4())[:], srcAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(80, dstPortOffset),
 							matchConnStateExprs(stateNew),
@@ -1643,8 +1811,8 @@ mapped_ports:
 				}: {
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(gatewayAddr.As4())[:], srcAddrOffset),
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(gatewayAddr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_UDP),
 							matchPortExprs(53, dstPortOffset),
 							matchConnStateExprs(stateNew),
@@ -1657,7 +1825,7 @@ mapped_ports:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_UDP),
 							matchPortExprs(53, dstPortOffset),
 							matchConnStateExprs(stateNewEst),
@@ -1670,7 +1838,7 @@ mapped_ports:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
 							matchProtoExprs(unix.IPPROTO_UDP),
 							matchPortExprs(53, srcPortOffset),
 							matchConnStateExprs(stateEst),
@@ -1683,8 +1851,8 @@ mapped_ports:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(gatewayAddr.As4())[:], srcAddrOffset),
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(gatewayAddr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(80, dstPortOffset),
 							matchConnStateExprs(stateNew),
@@ -1697,7 +1865,7 @@ mapped_ports:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(80, dstPortOffset),
 							matchConnStateExprs(stateNewEst),
@@ -1710,7 +1878,7 @@ mapped_ports:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(80, srcPortOffset),
 							matchConnStateExprs(stateEst),
@@ -1747,7 +1915,8 @@ mapped_ports:
 mapped_ports:
   external:
     allow: true
-    ip: 192.168.1.0/24`,
+    ips:
+      - 192.168.1.0/24`,
 						},
 					},
 					NetworkSettings: &types.NetworkSettings{
@@ -1791,8 +1960,8 @@ mapped_ports:
 				}: {
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(gatewayAddr.As4())[:], srcAddrOffset),
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(gatewayAddr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_UDP),
 							matchPortExprs(53, dstPortOffset),
 							matchConnStateExprs(stateNew),
@@ -1805,8 +1974,8 @@ mapped_ports:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPRangeExprs(lowDstAddr, highDstAddr, srcAddrOffset),
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrRangeExprs(lowDstAddr, highDstAddr, srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_UDP),
 							matchPortExprs(53, dstPortOffset),
 							matchConnStateExprs(stateNewEst),
@@ -1819,8 +1988,8 @@ mapped_ports:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
-							matchIPRangeExprs(lowDstAddr, highDstAddr, dstAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchAddrRangeExprs(lowDstAddr, highDstAddr, dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_UDP),
 							matchPortExprs(53, srcPortOffset),
 							matchConnStateExprs(stateEst),
@@ -1833,8 +2002,8 @@ mapped_ports:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(gatewayAddr.As4())[:], srcAddrOffset),
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(gatewayAddr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(80, dstPortOffset),
 							matchConnStateExprs(stateNew),
@@ -1847,8 +2016,8 @@ mapped_ports:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPRangeExprs(lowDstAddr, highDstAddr, srcAddrOffset),
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrRangeExprs(lowDstAddr, highDstAddr, srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(80, dstPortOffset),
 							matchConnStateExprs(stateNewEst),
@@ -1861,8 +2030,8 @@ mapped_ports:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
-							matchIPRangeExprs(lowDstAddr, highDstAddr, dstAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchAddrRangeExprs(lowDstAddr, highDstAddr, dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_TCP),
 							matchPortExprs(80, srcPortOffset),
 							matchConnStateExprs(stateEst),
@@ -1927,8 +2096,8 @@ mapped_ports:
 				}: {
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(gatewayAddr.As4())[:], srcAddrOffset),
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(gatewayAddr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_UDP),
 							matchPortExprs(443, dstPortOffset),
 							matchConnStateExprs(stateNewEst),
@@ -1941,8 +2110,8 @@ mapped_ports:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
-							matchIPExprs(ref(gatewayAddr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(gatewayAddr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_UDP),
 							matchPortExprs(443, srcPortOffset),
 							matchConnStateExprs(stateEst),
@@ -2009,8 +2178,8 @@ mapped_ports:
 				}: {
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(gatewayAddr.As4())[:], srcAddrOffset),
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(gatewayAddr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_UDP),
 							matchPortExprs(443, dstPortOffset),
 							matchConnStateExprs(stateNew),
@@ -2025,8 +2194,8 @@ mapped_ports:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(gatewayAddr.As4())[:], srcAddrOffset),
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(gatewayAddr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_UDP),
 							matchPortExprs(443, dstPortOffset),
 							matchConnStateExprs(stateEst),
@@ -2039,8 +2208,8 @@ mapped_ports:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
-							matchIPExprs(ref(gatewayAddr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(gatewayAddr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_UDP),
 							matchPortExprs(443, srcPortOffset),
 							matchConnStateExprs(stateEst),
@@ -2109,8 +2278,8 @@ mapped_ports:
 				}: {
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(gatewayAddr.As4())[:], srcAddrOffset),
-							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(gatewayAddr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_UDP),
 							matchPortExprs(443, dstPortOffset),
 							matchConnStateExprs(stateNewEst),
@@ -2125,8 +2294,8 @@ mapped_ports:
 					},
 					{
 						Exprs: slicesJoin(
-							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
-							matchIPExprs(ref(gatewayAddr.As4())[:], dstAddrOffset),
+							matchAddrExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchAddrExprs(ref(gatewayAddr.As4())[:], dstAddrOffset),
 							matchProtoExprs(unix.IPPROTO_UDP),
 							matchPortExprs(443, srcPortOffset),
 							matchConnStateExprs(stateEst),
@@ -2217,6 +2386,8 @@ mapped_ports:
 				}
 
 				t.Run(subTestName, func(t *testing.T) {
+					is := is.New(t)
+
 					// create rules
 					for _, c := range tt.containers {
 						if !allContainersStarted && len(dockerCli.containers) < len(tt.containers) {
