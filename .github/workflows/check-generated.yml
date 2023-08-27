@@ -20,17 +20,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Export constant environmental variables
-        uses: cardinalby/export-env-action@v2
-        with:
-          envFile: .github/constants.env
-
       - name: Install Go
         uses: actions/setup-go@v4
         with:
-          go-version: ${{ env.GO_VERSION }}.x
+          go-version-file: go.mod
           check-latest: true
-          cache: true
 
       - name: Ensure 'go generate' is clean
         run: |
