@@ -1327,7 +1327,7 @@ func getAddrExpr(offset uint32) expr.Any {
 		OperationType: expr.PayloadLoad,
 		Len:           4,
 		Base:          expr.PayloadBaseNetworkHeader,
-		Offset:        uint32(offset),
+		Offset:        offset,
 		DestRegister:  1,
 	}
 }
