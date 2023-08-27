@@ -27,6 +27,13 @@ services:
             proto: tcp
             dst_ports: 
               - 756
+          - proto: tcp
+            ips:
+              - 2.2.2.2-3.3.3.3
+              - 4.4.4.4-5.5.5.5
+            dst_ports:
+              - 1-5
+              - 10-20
     ports:
       - "8080:80"
 
