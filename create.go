@@ -1165,47 +1165,62 @@ func createPortExprs(nfc firewallClient, ports []rulePorts, portOffset uint32, c
 
 	if len(ports) == 1 {
 		if ports[0].single != 0 {
-			exprs = append(exprs, matchPortExprs(ports[0].single, portOffset)...)
+			exprs = matchPortExprs(ports[0].single, portOffset)
 		} else {
-			exprs = append(exprs, matchPortsExprs(ports[0].interval, portOffset)...)
+			exprs = matchPortsExprs(ports[0].interval, portOffset)
 		}
-	} else {
-		exprs = append(exprs, getPortExpr(portOffset))
+		return exprs, nil
+	}
 
-		var singlePorts []nftables.SetElement
-		for _, ports := range ports {
-			if ports.single != 0 {
-				singlePorts = append(singlePorts, nftables.SetElement{
-					Key: binary.BigEndian.AppendUint16(nil, ports.single),
-				})
-			}
+	exprs = append(exprs, getPortExpr(portOffset))
+
+	var singlePort uint16
+	var singlePortElems []nftables.SetElement
+	for _, ports := range ports {
+		if ports.single != 0 {
+			singlePort = ports.single
+			singlePortElems = append(singlePortElems, nftables.SetElement{
+				Key: binary.BigEndian.AppendUint16(nil, ports.single),
+			})
 		}
-		if len(singlePorts) != 0 {
+	}
+	if len(singlePortElems) != 0 {
+		if len(singlePortElems) == 1 {
+			// there is only one single port, no need to create a set
+			exprs = append(exprs, comparePortExpr(singlePort))
+		} else {
 			set := &nftables.Set{
 				Table:     chain.Table,
 				Anonymous: true,
 				Constant:  true,
 				KeyType:   nftables.TypeInetService,
 			}
-			if err := nfc.AddSet(set, singlePorts); err != nil {
+			if err := nfc.AddSet(set, singlePortElems); err != nil {
 				return nil, fmt.Errorf("error creating set: %w", err)
 			}
 			exprs = append(exprs, matchFromSetExpr(set))
 		}
+	}
 
-		var portIntervals []nftables.SetElement
-		for _, ports := range ports {
-			if ports.single == 0 {
-				portIntervals = append(portIntervals, nftables.SetElement{
-					Key: binary.BigEndian.AppendUint16(nil, ports.interval.min),
-				})
-				portIntervals = append(portIntervals, nftables.SetElement{
-					Key:         binary.BigEndian.AppendUint16(nil, ports.interval.max),
-					IntervalEnd: true,
-				})
-			}
+	var portRange portInterval
+	var portIntervalElems []nftables.SetElement
+	for _, ports := range ports {
+		if ports.single == 0 {
+			portRange = ports.interval
+			portIntervalElems = append(portIntervalElems, nftables.SetElement{
+				Key: binary.BigEndian.AppendUint16(nil, ports.interval.min),
+			})
+			portIntervalElems = append(portIntervalElems, nftables.SetElement{
+				Key:         binary.BigEndian.AppendUint16(nil, ports.interval.max),
+				IntervalEnd: true,
+			})
 		}
-		if len(portIntervals) != 0 {
+	}
+	if len(portIntervalElems) != 0 {
+		if len(portIntervalElems) == 2 {
+			// there is only one single port range, no need to create a set
+			exprs = append(exprs, comparePortsExprs(portRange)...)
+		} else {
 			set := &nftables.Set{
 				Table:     chain.Table,
 				Anonymous: true,
@@ -1213,11 +1228,15 @@ func createPortExprs(nfc firewallClient, ports []rulePorts, portOffset uint32, c
 				Interval:  true,
 				KeyType:   nftables.TypeInetService,
 			}
-			if err := nfc.AddSet(set, portIntervals); err != nil {
+			if err := nfc.AddSet(set, portIntervalElems); err != nil {
 				return nil, fmt.Errorf("error creating set: %w", err)
 			}
 			exprs = append(exprs, matchFromSetExpr(set))
 		}
+	}
+
+	if len(exprs) == 1 {
+		return nil, errors.New("whalewall bug: only one port expr created")
 	}
 
 	return exprs, nil
@@ -1286,18 +1305,27 @@ func matchProtoExprs(proto int) []expr.Any {
 func matchPortExprs(port uint16, offset uint32) []expr.Any {
 	return []expr.Any{
 		getPortExpr(offset),
-		// [ cmp eq reg 1 ... ]
-		&expr.Cmp{
-			Op:       expr.CmpOpEq,
-			Register: 1,
-			Data:     binary.BigEndian.AppendUint16(nil, port),
-		},
+		comparePortExpr(port),
+	}
+}
+
+func comparePortExpr(port uint16) expr.Any {
+	// [ cmp eq reg 1 ... ]
+	return &expr.Cmp{
+		Op:       expr.CmpOpEq,
+		Register: 1,
+		Data:     binary.BigEndian.AppendUint16(nil, port),
 	}
 }
 
 func matchPortsExprs(ports portInterval, offset uint32) []expr.Any {
+	exprs := []expr.Any{getPortExpr(offset)}
+	exprs = append(exprs, comparePortsExprs(ports)...)
+	return exprs
+}
+
+func comparePortsExprs(ports portInterval) []expr.Any {
 	return []expr.Any{
-		getPortExpr(offset),
 		// [ cmp gte reg 1 ... ]
 		&expr.Cmp{
 			Op:       expr.CmpOpGte,

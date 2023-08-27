@@ -565,6 +565,84 @@ output:
 			},
 		},
 		{
+			name: "allow HTTP and range outbound",
+			containers: []types.ContainerJSON{
+				{
+					ContainerJSONBase: &types.ContainerJSONBase{
+						ID:   cont1ID,
+						Name: "/" + cont1Name,
+					},
+					Config: &container.Config{
+						Labels: map[string]string{
+							enabledLabel: "true",
+							rulesLabel: `
+output:
+  - proto: tcp
+    dst_ports:
+      - 80
+      - 420-9001`,
+						},
+					},
+					NetworkSettings: &types.NetworkSettings{
+						Networks: map[string]*network.EndpointSettings{
+							"default": {
+								Gateway:   gatewayAddr.String(),
+								IPAddress: cont1Addr.String(),
+							},
+						},
+					},
+				},
+			},
+			expectedRules: map[*nftables.Chain][]*nftables.Rule{
+				{
+					Name:  buildChainName(cont1Name, cont1ID),
+					Table: filterTable,
+				}: {
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont1Addr.As4())[:], srcAddrOffset),
+							matchProtoExprs(unix.IPPROTO_TCP),
+							[]expr.Any{
+								getPortExpr(dstPortOffset),
+								comparePortExpr(80),
+							},
+							comparePortsExprs(portInterval{420, 9001}),
+							matchConnStateExprs(stateNewEst),
+							[]expr.Any{
+								&expr.Counter{},
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					{
+						Exprs: slicesJoin(
+							matchIPExprs(ref(cont1Addr.As4())[:], dstAddrOffset),
+							matchProtoExprs(unix.IPPROTO_TCP),
+							[]expr.Any{
+								getPortExpr(srcPortOffset),
+								comparePortExpr(80),
+							},
+							comparePortsExprs(portInterval{420, 9001}),
+							matchConnStateExprs(stateEst),
+							[]expr.Any{
+								&expr.Counter{},
+								acceptVerdict,
+							},
+						),
+						UserData: []byte(cont1ID),
+					},
+					createDropRule(
+						&nftables.Chain{
+							Name:  buildChainName(cont1Name, cont1ID),
+							Table: filterTable,
+						},
+						cont1ID,
+					),
+				},
+			},
+		},
+		{
 			name: "allow HTTPS outbound to 1.1.1.1",
 			containers: []types.ContainerJSON{
 				{
@@ -2203,6 +2281,16 @@ mapped_ports:
 
 	for _, tt := range tests {
 		tt := tt
+
+		for chain, rules := range tt.expectedRules {
+			for i := range rules {
+				// set rule's table here so we don't have to in test
+				// cases above
+				rules[i].Table = filterTable
+			}
+			tt.expectedRules[chain] = rules
+		}
+
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -2706,10 +2794,6 @@ func compareRules(t *testing.T, comparer func(r1, r2 *nftables.Rule) bool, chain
 		return
 	}
 	for i := range expectedRules {
-		// set rule's table here so we don't have to in test
-		// cases above
-		expectedRules[i].Table = filterTable
-
 		if !cmp.Equal(expectedRules[i], rules[i], cmp.Comparer(comparer)) {
 			t.Errorf("chain %s rule %d not equal:\n%s",
 				chainName,
@@ -2727,6 +2811,7 @@ func compareRules(t *testing.T, comparer func(r1, r2 *nftables.Rule) bool, chain
 	}
 }
 
+// TODO: remove when slices.Concat is added
 func slicesJoin[T any](s ...[]T) (ret []T) {
 	for _, ss := range s {
 		ret = append(ret, ss...)
@@ -2735,6 +2820,7 @@ func slicesJoin[T any](s ...[]T) (ret []T) {
 	return ret
 }
 
+// TODO: remove when slices.Reverse is added
 func reverse[E any](s []E) {
 	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
 		s[i], s[j] = s[j], s[i]
