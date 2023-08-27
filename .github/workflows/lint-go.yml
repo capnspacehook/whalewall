@@ -19,6 +19,7 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Install Go
+        id: install-go
         uses: actions/setup-go@v4
         with:
           go-version-file: go.mod
@@ -26,7 +27,7 @@ jobs:
 
       - name: Ensure go.mod was tidied
         run: |
-          go mod tidy -compat ${{ env.GO_VERSION }}
+          go mod tidy -compat ${{ steps.outputs.install-go.go-version }}
           STATUS=$(git status --porcelain go.mod go.sum)
           if [ -n "$STATUS" ]; then
             echo "Running go mod tidy modified go.mod and/or go.sum"
