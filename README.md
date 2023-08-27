@@ -269,6 +269,15 @@ Port and IP ranges are inclusive. Examples:
 - `4000-5000` will match all ports between and including port 4000 and port 5000
 - `1.1.1.1-2.2.2.2` will match all IPs between and including 1.1.1.1 and 2.2.2.2
 
+### Docker environmental variables
+
+Whalewall accepts several environmental variables that can be used to configure how it connects to a Docker server:
+
+- `DOCKER_HOST` to set the URL to the Docker server.
+- `DOCKER_API_VERSION` to set the version of the Docker API to use, leave empty for latest.
+- `DOCKER_CERT_PATH` to specify the directory from which to load the TLS certificates (ca.pem, cert.pem, key.pem).
+- `DOCKER_TLS_VERIFY` to enable or disable TLS verification (off by default).
+
 ### Tips
 
 - Logged traffic is sent to the kernel log file, typically `/var/log/kern.log` for Debian based distros
