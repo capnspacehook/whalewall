@@ -214,8 +214,8 @@ mapped_ports:
     allow: false
     # optional; log new inbound traffic that this rule will match
     log_prefix: ""
-    # optional; an IP address, CIDR, or range of IP addresses to allow traffic from
-    ip: ""
+    # optional; a list of IP addresses, CIDRs, or ranges of IP addresses to allow traffic from
+    ip: []
     # optional; settings that allow you to filter traffic further if desired
     verdict:
       # optional; a chain to jump to after matching traffic. This applies to new and established
@@ -236,18 +236,18 @@ output:
     # optional; a Docker network traffic will be allowed out of. If unset, will default to all 
     # networks the container is a member of. Required if 'container' is set
     network: ""
-    # optional; an IP address, CIDR, or range of IP addresses to allow traffic to
-    ip: ""
+    # optional; a list of IP addresses, CIDRs, or ranges of IP addresses to allow traffic to
+    ips: []
     # optional; a container to allow traffic to. This can be either the name of the container or
     # the service name of the container is docker compose is used
     container: ""
     # required; either 'tcp' or 'udp'
     proto: ""
-    # optional; the source ports to allow traffic to. This can be either a single port or a
-    # range of ports
+    # optional; a list of source ports to allow traffic to. Can be a single port or a
+    # range of ports.
     src_ports: []
-    # optional; the destination ports to allow traffic to. This can be either a single port or a
-    # range of ports
+    # optional; a list of destination ports to allow traffic to. Can be a single port or a
+    # range of ports.
     dst_ports: []
     # optional; settings that allow you to filter traffic further if desired
     verdict:
@@ -263,6 +263,11 @@ output:
       # 'input_est_queue' is set
       output_est_queue: 0
 ```
+
+Port and IP ranges are inclusive. Examples:
+
+- `4000-5000` will match all ports between and including port 4000 and port 5000
+- `1.1.1.1-2.2.2.2` will match all IPs between and including 1.1.1.1 and 2.2.2.2
 
 ### Tips
 
