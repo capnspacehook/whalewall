@@ -7,7 +7,10 @@ import (
 	"github.com/capnspacehook/whalewall/database"
 )
 
-//go:generate go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.20.0 generate
+// TODO: use 'go run' when https://github.com/golang/go/issues/33468 is fixed
+// or use 'go tool' instead if https://github.com/golang/go/issues/48429 is implemented
+//go:generate go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.20.0
+//go:generate sqlc generate
 
 func (r *RuleManager) containerExists(ctx context.Context, db database.Querier, id string) (bool, error) {
 	exists, err := db.ContainerExists(ctx, id)
