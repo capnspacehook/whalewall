@@ -215,7 +215,7 @@ mapped_ports:
     # optional; log new inbound traffic that this rule will match
     log_prefix: ""
     # optional; a list of IP addresses, CIDRs, or ranges of IP addresses to allow traffic from
-    ip: []
+    ips: []
     # optional; settings that allow you to filter traffic further if desired
     verdict:
       # optional; a chain to jump to after matching traffic. This applies to new and established
