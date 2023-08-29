@@ -150,7 +150,8 @@ services:
           # allow traffic to port 80 from LAN
           external:
             allow: true
-            ip: "192.168.1.0/24"
+            ips:
+              - "192.168.1.0/24"
         output:
           # allow postgres connections
           - network: default
