@@ -1,4 +1,4 @@
-FROM golang:1.21.0-alpine AS builder
+FROM golang:1.21.1-alpine AS builder
 
 COPY . /build
 WORKDIR /build/cmd/whalewall
