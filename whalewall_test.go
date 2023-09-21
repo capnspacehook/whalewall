@@ -205,7 +205,7 @@ func startWhalewall(t *testing.T, is *is.I, tempDir string) func() {
 func startBinary(t *testing.T, is *is.I, tempDir string) func() {
 	t.Helper()
 
-	wwCmd := exec.Command(*whalewallBinary, "-debug", "-d", tempDir)
+	wwCmd := exec.Command(*whalewallBinary, "-debug", "-d", tempDir, "-i=250ms")
 	wwCmd.Stdout = os.Stdout
 	wwCmd.Stderr = os.Stderr
 	err := wwCmd.Start()
@@ -229,7 +229,7 @@ func startBinary(t *testing.T, is *is.I, tempDir string) func() {
 func startContainer(t *testing.T, is *is.I, tempDir string) func() {
 	t.Helper()
 
-	dockerCmd := exec.Command(
+ dockerCmd := exec.Command(
 		"docker",
 		"run",
 		"--cap-add=NET_ADMIN",
@@ -240,7 +240,8 @@ func startContainer(t *testing.T, is *is.I, tempDir string) func() {
 		*whalewallImage,
 		"-d=/data",
 		"-debug",
-	)
+  "-i=250ms",
+ )
 	dockerCmd.Stdout = os.Stdout
 	dockerCmd.Stderr = os.Stderr
 	err := dockerCmd.Start()
@@ -270,7 +271,7 @@ func startFunc(t *testing.T, is *is.I, tempDir string) func() {
 	logger.Info("starting whalewall")
 	ctx, cancel := context.WithCancel(context.Background())
 	dbFile := filepath.Join(tempDir, "db.sqlite")
-	r, err := NewRuleManager(ctx, logger, dbFile, defaultTimeout, time.Minute)
+	r, err := NewRuleManager(ctx, logger, dbFile, defaultTimeout, 250*time.Millisecond)
 	is.NoErr(err)
 	err = r.Start(ctx)
 	is.NoErr(err)
