@@ -83,7 +83,7 @@ jobs:
 
       - name: Set Docker labels and tags
         id: metadata
-        uses: docker/metadata-action@v4
+        uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
           flavor: |
