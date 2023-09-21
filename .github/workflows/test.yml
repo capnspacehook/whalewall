@@ -61,7 +61,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Docker buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
       - name: Ensure Docker image builds
         uses: docker/build-push-action@v5
