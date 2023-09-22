@@ -8,9 +8,15 @@ on:
       - "v*.*.*"
 
 jobs:
-  release:
+  release-binaries:
     permissions:
-      id-token: write
       contents: write
+      id-token: write
+    uses: capnspacehook/go-workflows/.github/workflows/release-binaries.yml@master
+
+  release-image:
+    permissions:
+      contents: read
+      id-token: write
       packages: write
-    uses: capnspacehook/go-workflows/.github/workflows/release.yml@master
+    uses: capnspacehook/go-workflows/.github/workflows/release-image.yml@master
