@@ -11,62 +11,7 @@ on:
   workflow_dispatch: {}
 
 jobs:
-  check-mod-tidy:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Go
-        id: install-go
-        uses: actions/setup-go@v4
-        with:
-          go-version-file: go.mod
-          check-latest: true
-
-      - name: Ensure go.mod was tidied
-        run: |
-          go mod tidy -compat ${{ steps.install-go.outputs.go-version }}
-          STATUS=$(git status --porcelain go.mod go.sum)
-          if [ -n "$STATUS" ]; then
-            echo "Running go mod tidy modified go.mod and/or go.sum"
-            exit 1
-          fi
-          exit 0
-
-  staticcheck:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Go
-        id: install-go
-        uses: actions/setup-go@v4
-        with:
-          go-version-file: go.mod
-          check-latest: true
-
-      - name: Lint with staticcheck
-        uses: dominikh/staticcheck-action@v1.3.0
-        with:
-          install-go: false
-
-  golangci-lint:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Go
-        id: install-go
-        uses: actions/setup-go@v4
-        with:
-          go-version-file: go.mod
-          check-latest: true
-
-      - name: Lint with golangci-lint
-        uses: golangci/golangci-lint-action@v3.7.0
+  lint-go:
+    permissions:
+      contents: read
+    uses: capnspacehook/go-workflows/.github/workflows/lint-go.yml@master

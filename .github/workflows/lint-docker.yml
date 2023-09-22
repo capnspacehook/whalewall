@@ -9,13 +9,6 @@ on:
 
 jobs:
   lint-dockerfile:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Lint Dockerfile
-        uses: hadolint/hadolint-action@v3.1.0
-        with:
-          dockerfile: Dockerfile
+    permissions:
+      contents: read
+    uses: capnspacehook/go-workflows/.github/workflows/lint-docker.yml@master
