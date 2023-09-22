@@ -13,20 +13,7 @@ on:
   workflow_dispatch: {}
 
 jobs:
-  govulncheck:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Go
-        uses: actions/setup-go@v4
-        with:
-          go-version-file: go.mod
-          check-latest: true
-
-      - name: Scan for known vulnerable dependencies
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+  vuln-check:
+    permissions:
+      contents: read
+    uses: capnspacehook/go-workflows/.github/workflows/vuln.yml@master
