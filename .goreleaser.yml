@@ -1,6 +1,3 @@
-env:
-  - COSIGN_EXPERIMENTAL=true
-
 changelog:
   use: github-native
   sort: asc
@@ -17,10 +14,10 @@ builds:
       - -buildmode=pie
       - -buildvcs=true
       - -trimpath
+    mod_timestamp: '{{ .CommitTimestamp }}'
     ldflags:
       - -s -w -X "main.version={{ .Tag }}"
     main: ./cmd/whalewall
-    mod_timestamp: '{{ .CommitTimestamp }}'
 
 archives:
   - id: binary-archive
@@ -43,7 +40,7 @@ signs:
   - id: checksum-signature
     cmd: cosign
     certificate: "${artifact}.crt"
-    args: ["sign-blob", "--output-signature", "${signature}", "--output-certificate", "${certificate}", "${artifact}"]
+    args: ["sign-blob", "--output-signature", "${signature}", "--output-certificate", "${certificate}", "${artifact}", "--yes"]
     artifacts: checksum
 
 release:
