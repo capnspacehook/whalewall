@@ -16,7 +16,7 @@ builds:
       - -trimpath
     mod_timestamp: '{{ .CommitTimestamp }}'
     ldflags:
-      - -s -w -X "main.version={{ .Tag }}"
+      - '-s -w -X main.version={{ if eq .Tag "v0.0.0" }}devel{{ else }}{{ .Tag }}{{ end }}'
     main: ./cmd/whalewall
 
 archives:
