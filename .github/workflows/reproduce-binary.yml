@@ -1,0 +1,19 @@
+name: Reproduce binary
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - "*"
+
+  workflow_dispatch: {}
+
+jobs:
+  reproduce-binary:
+    permissions:
+      contents: read
+    uses: capnspacehook/go-workflows/.github/workflows/reproduce-binary.yml@master
+    with:
+      extra-build-flags: "-ldflags=-s -w -X main.version=devel"
