@@ -291,16 +291,16 @@ container rules
 ## Verifying releases
 
 Starting from v0.2.0, all Docker images and binary checksum files are signed. You can verify
-images or released binaries to ensure they were not tampered with.
+images or released binaries to ensure they were not tampered with in transit.
 
-Verifying Docker images or binaries both require [cosign](https://github.com/sigstore/cosign).
+Verifying Docker images or binaries both require [`cosign`](https://github.com/sigstore/cosign).
 
 ### Verifying Docker images
 
 Simply check the signature of the image with `cosign`:
 
 ```sh
-COSIGN_EXPERIMENTAL=true cosign verify ghcr.io/capnspacehook/whalewall:<version> | jq
+cosign verify ghcr.io/capnspacehook/whalewall:<version> | jq
 ```
 
 You can verify the image was built by Github Actions by inspecting the `Issuer` and `Subject` fields of the output.
@@ -313,6 +313,37 @@ Extract the binary from the archive, verify the checksums file and verify the co
 
 ```sh
 tar xfs whalewall_<version>_linux_amd64.tar.gz
-COSIGN_EXPERIMENTAL=true cosign verify-blob --certificate checksums.txt.crt --signature checksums.txt.sig checksums.txt
+cosign verify-blob --certificate checksums.txt.crt --signature checksums.txt.sig checksums.txt
 sha256sum -c checksums.txt
+```
+
+### Reproducing released binaries
+
+You can also reproduce the released binaries to verify that they were built from this unmodified
+source code. Verifying binaries requires [`gorepro`](https://github.com/capnspacehook/gorepro).
+
+First, download the release archive and extract it. Clone this repro and go into it.
+
+Install `gorepro` and run it on the extracted release binary. `gorepro` will tell you if reproducing
+the binary was successful. Don't worry about checking out the correct tag or commit, gorepro will
+handle that for you.
+
+If you don't trust `gorepro` you can run it again additionally passing the `-d` flag. This will
+print the commands `gorepro` generated to reproduce the release binary. You can run the printed commands
+and verify for yourself that the reproduced binary is bit for bit identical to the released one.
+
+```sh
+tar fxs whalewall_<version>_linux_amd64.tar.gz
+git clone https://github.com/capnspacehook/whalewall whalewall-src
+cd whalewall-src
+
+# reproduce binary
+go install github.com/capnspacehook/gorepro@latest
+gorepro -b="-ldflags=-s -w -X main.version <version>" ../whalewall
+
+# reproduce by manually running command from gorepro
+BUILD_CMD="$(gorepro -d -b='-ldflags=-s -w -X main.version <version>' ../whalewall)"
+echo "$BUILD_CMD"
+"$BUILD_CMD"
+sha256sum whalewall whalewall.repro
 ```
