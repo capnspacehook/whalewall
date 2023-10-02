@@ -13,7 +13,7 @@ require (
 	golang.org/x/sys v0.12.0
 	gopkg.in/yaml.v3 v3.0.1
 	gvisor.dev/gvisor v0.0.0-20230811195211-463ea554e02f
-	modernc.org/sqlite v1.25.0
+	modernc.org/sqlite v1.26.0
 )
 
 // Test dependencies
