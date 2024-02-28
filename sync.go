@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
@@ -72,6 +73,40 @@ func (r *RuleManager) syncContainers(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// watchContainers periodically checks that container rules created by
+// whalewall haven't been deleted, modified or added to and fixes them
+// if necessary.
+func (r *RuleManager) watchContainers(ctx context.Context) {
+	ticker := time.NewTicker(r.watchInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			conts, err := r.db.GetContainers(ctx)
+			if err != nil {
+				r.logger.Error("error getting containers from database", zap.Error(err))
+				continue
+			}
+			for _, c := range conts {
+				container, err := r.dockerCli.ContainerInspect(ctx, c.ID)
+				if err != nil {
+					r.logger.Error("error inspecting container", zap.String("container.id", c.ID[:12]), zap.Error(err))
+					continue
+				}
+				r.createCh <- containerDetails{
+					container: container,
+					isNew:     false,
+				}
+			}
+		case <-ctx.Done():
+			return
+		case <-r.stopping:
+			return
+		}
+	}
 }
 
 func whalewallEnabled(labels map[string]string) (bool, error) {
