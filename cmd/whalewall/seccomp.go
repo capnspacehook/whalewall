@@ -136,6 +136,13 @@ var allowedSyscalls = seccomp.SyscallRules{
 			seccomp.MatchAny{},
 			seccomp.MatchAny{},
 		},
+		{
+			seccomp.MatchAny{},
+			seccomp.EqualTo(unix.SOL_SOCKET),
+			seccomp.EqualTo(unix.SO_TYPE),
+			seccomp.MatchAny{},
+			seccomp.MatchAny{},
+		},
 	},
 	unix.SYS_GETTID:  {},
 	unix.SYS_LSEEK:   {},
