@@ -1,6 +1,6 @@
 module github.com/capnspacehook/whalewall
 
-go 1.21
+go 1.22.4
 
 require (
 	github.com/docker/docker v24.0.6+incompatible
