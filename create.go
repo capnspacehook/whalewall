@@ -76,7 +76,11 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 
 	contName := stripName(container.Name)
 	logger := r.logger.With(zap.String("container.id", container.ID[:12]), zap.String("container.name", contName))
-	logger.Info("creating rules", zap.Bool("container.is_new", isNew))
+	if isNew {
+		logger.Info("creating rules", zap.Bool("container.is_new", isNew))
+	} else {
+		logger.Debug("watching rules", zap.Bool("container.is_new", isNew))
+	}
 
 	// check that network settings are valid
 	if container.NetworkSettings == nil {
@@ -332,7 +336,7 @@ func (r *RuleManager) createContainerRules(ctx context.Context, container types.
 
 	logger.Debug("adding to database")
 
-	if err := r.addContainer(ctx, tx, container.ID, contName, service, addrs, estContainers); err != nil {
+	if err := r.addContainerInfo(ctx, tx, container.ID, contName, service, addrs, estContainers); err != nil {
 		return fmt.Errorf("error adding container information to database: %w", err)
 	}
 
