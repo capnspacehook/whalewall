@@ -177,9 +177,17 @@ var allowedSyscalls = seccomp.SyscallRules{
 	unix.SYS_MUNMAP:     {},
 	unix.SYS_NANOSLEEP:  {},
 	unix.SYS_NEWFSTATAT: {},
-	unix.SYS_OPENAT:     {},
-	unix.SYS_PIPE2:      {},
-	unix.SYS_READ:       {},
+	unix.SYS_OPEN: {
+		{
+			seccomp.MatchAny{},
+			seccomp.EqualTo(unix.O_RDONLY | unix.O_LARGEFILE | unix.O_CLOEXEC),
+		},
+	},
+	unix.SYS_OPENAT:   {},
+	unix.SYS_PIPE2:    {},
+	unix.SYS_PREAD64:  {},
+	unix.SYS_PWRITE64: {},
+	unix.SYS_READ:     {},
 	unix.SYS_RECVMSG: {
 		{
 			seccomp.MatchAny{},
