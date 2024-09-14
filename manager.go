@@ -54,6 +54,8 @@ type RuleManager struct {
 
 	containerTracker *container.Tracker
 
+	watchInterval time.Duration
+
 	createCh chan containerDetails
 	deleteCh chan string
 
@@ -70,7 +72,7 @@ type containerDetails struct {
 	isNew     bool
 }
 
-func NewRuleManager(ctx context.Context, logger *zap.Logger, dbFile string, timeout time.Duration) (*RuleManager, error) {
+func NewRuleManager(ctx context.Context, logger *zap.Logger, dbFile string, timeout, watchInterval time.Duration) (*RuleManager, error) {
 	r := RuleManager{
 		stopping: make(chan struct{}),
 		done:     make(chan struct{}),
@@ -89,6 +91,7 @@ func NewRuleManager(ctx context.Context, logger *zap.Logger, dbFile string, time
 			return nftables.New()
 		},
 		containerTracker: container.NewTracker(logger),
+		watchInterval:    watchInterval,
 		createCh:         make(chan containerDetails),
 		deleteCh:         make(chan string),
 	}
@@ -126,7 +129,12 @@ func (r *RuleManager) Start(ctx context.Context) error {
 		r.logger.Error("error syncing containers", zap.Error(err))
 	}
 
-	r.wg.Add(1)
+	r.wg.Add(2)
+	go func() {
+		defer r.wg.Done()
+
+		r.watchContainers(ctx)
+	}()
 	go func() {
 		defer r.wg.Done()
 
