@@ -276,17 +276,17 @@ func (p *rulePorts) UnmarshalText(text []byte) error {
 
 	var parsedPorts rulePorts
 	if intervalIdx != 0 {
-		min, err := strconv.ParseUint(string(text[:intervalIdx]), 10, 16)
+		intervalMin, err := strconv.ParseUint(string(text[:intervalIdx]), 10, 16)
 		if err != nil {
 			return fmt.Errorf("error parsing start of port interval: %w", err)
 		}
-		max, err := strconv.ParseUint(string(text[intervalIdx+1:]), 10, 16)
+		intervalMax, err := strconv.ParseUint(string(text[intervalIdx+1:]), 10, 16)
 		if err != nil {
 			return fmt.Errorf("error parsing end of port interval: %w", err)
 		}
 		parsedPorts.interval = portInterval{
-			min: uint16(min),
-			max: uint16(max),
+			min: uint16(intervalMin),
+			max: uint16(intervalMax),
 		}
 	} else {
 		port, err := strconv.ParseUint(string(text), 10, 16)

@@ -30,7 +30,7 @@ func main() {
 }
 
 func mainRetCode() int {
-	clear := flag.Bool("clear", false, "remove all firewall rules created by whalewall")
+	clearRules := flag.Bool("clear", false, "remove all firewall rules created by whalewall")
 	dataDir := flag.String("d", ".", "directory to store state in")
 	debugLogs := flag.Bool("debug", false, "enable debug logging")
 	logPath := flag.String("l", "stdout", "path to log to")
@@ -102,7 +102,7 @@ func mainRetCode() int {
 	}
 
 	// remove all created firewall rules if the user asked to clear
-	if *clear {
+	if *clearRules {
 		logger.Info("clearing rules")
 		if err := r.Clear(ctx, sqliteFile); err != nil {
 			logger.Error("error clearing rules", zap.Error(err))
