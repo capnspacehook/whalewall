@@ -35,6 +35,7 @@ func mainRetCode() int {
 	debugLogs := flag.Bool("debug", false, "enable debug logging")
 	logPath := flag.String("l", "stdout", "path to log to")
 	timeout := flag.Duration("t", 10*time.Second, "timeout for Docker API requests")
+	watchInterval := flag.Duration("i", time.Minute, "interval to check created container rules")
 	displayVersion := flag.Bool("version", false, "print version and build information and exit")
 	flag.Parse()
 
@@ -47,6 +48,11 @@ func mainRetCode() int {
 	if *displayVersion {
 		printVersionInfo(info)
 		return 0
+	}
+
+	if *watchInterval <= 0 {
+		log.Println("-i must be greater than 0")
+		return 1
 	}
 
 	// build logger
@@ -92,7 +98,7 @@ func mainRetCode() int {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	r, err := whalewall.NewRuleManager(ctx, logger, sqliteFile, *timeout)
+	r, err := whalewall.NewRuleManager(ctx, logger, sqliteFile, *timeout, *watchInterval)
 	if err != nil {
 		logger.Error("error initializing", zap.Error(err))
 	}
