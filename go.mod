@@ -4,7 +4,7 @@ go 1.22.4
 
 require (
 	github.com/docker/docker v24.0.6+incompatible
-	github.com/docker/go-connections v0.5.0
+	github.com/docker/go-connections v0.6.0
 	github.com/google/nftables v0.2.0
 	github.com/landlock-lsm/go-landlock v0.0.0-20230212201647-821adaecc1a5
 	go.uber.org/zap v1.27.0
