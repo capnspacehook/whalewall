@@ -1,3 +1,5 @@
+version: 2
+
 changelog:
   use: github-native
   sort: asc
@@ -16,16 +18,16 @@ builds:
       - -trimpath
     mod_timestamp: '{{ .CommitTimestamp }}'
     ldflags:
-      - '-s -w -X main.version={{ if eq .Tag "v0.0.0" }}devel{{ else }}{{ .Tag }}{{ end }}'
+      - '-s -w -X main.version={{ if .IsSnapshot }}devel{{ else }}{{ .Tag }}{{ end }}'
     main: ./cmd/whalewall
 
 archives:
   - id: binary-archive
     name_template: "{{ .ProjectName }}"
-    format: binary
+    formats: binary
   - id: tar-archive
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format: tar.gz
+    formats: tar.gz
     # hack to only add binary to archive
     files:
       - none*
@@ -39,8 +41,12 @@ checksum:
 signs:
   - id: checksum-signature
     cmd: cosign
-    certificate: "${artifact}.crt"
-    args: ["sign-blob", "--output-signature", "${signature}", "--output-certificate", "${certificate}", "${artifact}", "--yes"]
+    signature: "${artifact}.sigstore.json"
+    args:
+      - "sign-blob"
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
     artifacts: checksum
 
 release:

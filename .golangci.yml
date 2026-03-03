@@ -1,64 +1,86 @@
-issues:
-  max-same-issues: 0
-  max-issues-per-linter: 0
-
+version: "2"
 linters:
-  disable-all: true
+  default: none
   enable:
     - asasalint
     - bidichk
     - bodyclose
+    - copyloopvar
     - durationcheck
     - errcheck
     - errchkjson
     - errorlint
-    - execinquery
+    - exptostd
+    - fatcontext
     - forcetypeassert
-    - gci
     - gocheckcompilerdirectives
     - goconst
     - gocritic
-    - gofumpt
-    - gosimple
     - govet
     - ineffassign
+    - intrange
     - loggercheck
-    - misspell
     - mirror
+    - misspell
     - nilerr
+    - nolintlint
+    - nilnesserr
     - nilnil
-    - noctx
     - paralleltest
+    - perfsprint
     - prealloc
     - predeclared
     - reassign
     - revive
     - rowserrcheck
+    - sloglint
     - sqlclosecheck
-    - tenv
     - thelper
+    - tparallel
     - unconvert
     - unparam
     - unused
     - usestdlibvars
-
-linters-settings:
-  errcheck:
-    exclude-functions:
-      - (go.uber.org/zap/zapcore.ObjectEncoder).AddObject
-  gci:
-    sections:
-      - standard
-      - default
-      - prefix(github.com/capnspacehook/whalewall)
-  misspell:
-    locale: US
-  paralleltest:
-    ignore-missing: true
-  revive:
-    rules:
-      - name: blank-imports
-        disabled: true
-
-run:
-  timeout: 10m
+    - wastedassign
+  settings:
+    errcheck:
+      exclude-functions:
+        - (go.uber.org/zap/zapcore.ObjectEncoder).AddObject
+    misspell:
+      locale: US
+    paralleltest:
+      ignore-missing: true
+    revive:
+      rules:
+        - name: blank-imports
+          disabled: true
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+formatters:
+  enable:
+    - gci
+    - gofumpt
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/capnspacehook/whalewall)
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

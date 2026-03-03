@@ -4,9 +4,19 @@ on:
   push:
     branches:
       - master
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/lint-go.yml"
   pull_request:
     branches:
       - "*"
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/lint-go.yml"
 
   workflow_dispatch: {}
 
