@@ -4,11 +4,19 @@ on:
   push:
     branches:
       - master
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/check-generated.yml"
   pull_request:
     branches:
       - "*"
-  schedule:
-    - cron: "00 13 * * 1"
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/check-generated.yml"
 
   workflow_dispatch: {}
 

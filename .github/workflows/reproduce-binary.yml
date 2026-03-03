@@ -4,9 +4,21 @@ on:
   push:
     branches:
       - master
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - ".goreleaser.yml"
+      - ".github/workflows/reproduce-binary.yml"
   pull_request:
     branches:
       - "*"
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - ".goreleaser.yml"
+      - ".github/workflows/reproduce-binary.yml"
 
   workflow_dispatch: {}
 

@@ -4,9 +4,19 @@ on:
   push:
     branches:
       - master
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/test.yml"
   pull_request:
     branches:
       - "*"
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/test.yml"
 
   workflow_dispatch: {}
 
@@ -28,14 +38,18 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: Cache Go files
-        uses: capnspacehook/cache-go@v1
+      - name: Restore Go cache
+        uses: capnspacehook/cache-go/restore@v2.0.1
 
       # the test is compiled and run as root so that whalewall can
       # interface with nftables, which is a privileged operation
       - run: |
           go test -c -race -o whalewall.test
           sudo ./whalewall.test -test.timeout 5m -test.v
+
+      - name: Save Go cache
+        if: always()
+        uses: capnspacehook/cache-go/save@v2.0.1
 
   binary-test:
     runs-on: ubuntu-latest
@@ -50,8 +64,8 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: Cache Go files
-        uses: capnspacehook/cache-go@v1
+      - name: Restore Go cache
+        uses: capnspacehook/cache-go/restore@v2.0.1
 
       # run the integration tests but use a binary to create rules
       # to test with landlock and seccomp filters active
@@ -61,6 +75,10 @@ jobs:
           cd ../../
           go test -c -o whalewall.test
           sudo ./whalewall.test -binary-tests -test.run Integration -test.timeout 5m -test.v
+
+      - name: Save Go cache
+        if: always()
+        uses: capnspacehook/cache-go/save@v2.0.1
 
   image-test:
     runs-on: ubuntu-latest
@@ -85,11 +103,15 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: Cache Go files
-        uses: capnspacehook/cache-go@v1
+      - name: Restore Go cache
+        uses: capnspacehook/cache-go/restore@v2.0.1
 
       # run the integration tests but use a container to create rules
       # to test with landlock and seccomp filters active
       - run: |
           go test -c -o whalewall.test
           sudo ./whalewall.test -container-tests -test.run Integration -test.timeout 5m -test.v
+
+      - name: Save Go cache
+        if: always()
+        uses: capnspacehook/cache-go/save@v2.0.1
