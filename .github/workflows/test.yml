@@ -28,7 +28,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Cache Go files
-        uses: capnspacehook/cache-go@v1
+        uses: capnspacehook/cache-go@v2
 
       # the test is compiled and run as root so that whalewall can
       # interface with nftables, which is a privileged operation
@@ -49,7 +49,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Cache Go files
-        uses: capnspacehook/cache-go@v1
+        uses: capnspacehook/cache-go@v2
 
       # run the integration tests but use a binary to create rules
       # to test with landlock and seccomp filters active
@@ -83,7 +83,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Cache Go files
-        uses: capnspacehook/cache-go@v1
+        uses: capnspacehook/cache-go@v2
 
       # run the integration tests but use a container to create rules
       # to test with landlock and seccomp filters active
