@@ -33,7 +33,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Go
-        uses: actions/setup-go@v6.3.0
+        uses: actions/setup-go@v6.4.0
         with:
           go-version-file: go.mod
           cache: false
@@ -59,7 +59,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Go
-        uses: actions/setup-go@v6.3.0
+        uses: actions/setup-go@v6.4.0
         with:
           go-version-file: go.mod
           cache: false
@@ -98,7 +98,7 @@ jobs:
           tags: whalewall:test
 
       - name: Install Go
-        uses: actions/setup-go@v6.3.0
+        uses: actions/setup-go@v6.4.0
         with:
           go-version-file: go.mod
           cache: false
